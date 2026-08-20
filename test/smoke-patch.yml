@@ -1,0 +1,3 @@
+- id: sensory-memory
+  config:
+    indexDir: !!js dshHomePath('sensory-index')

@@ -1,0 +1,12 @@
+- insert:
+    - id: sensory-memory
+      name: '@local/sensory-memory'
+      config:
+        indexDir: !!js dshHomePath('sensory-index')
+        indexScope: global
+        journalCompactAfter: 2000
+        cacheMinConfidence: 0.6
+        llmProvider: opencode-go
+        llmModel: deepseek-v4-flash
+        llmReasoningEffort: high
+        cleanupLegacyOnStart: true

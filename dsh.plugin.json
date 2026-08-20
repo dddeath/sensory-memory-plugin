@@ -1,0 +1,26 @@
+{
+  "id": "sensory-memory",
+  "version": "0.6.0-debug-interfaces",
+  "main": "./lib/index.js",
+  "description": "Pre-step sensory memory injection with prompt-layer debug and scoped cleanup tools",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {
+    "tools": [
+      "sensory_recall",
+      "sensory_open",
+      "sensory_store",
+      "sensory_demote",
+      "sensory_status",
+      "sensory_audit",
+      "sensory_cache_status",
+      "sensory_debug_last_prompt",
+      "sensory_debug_cache_prompt",
+      "sensory_debug_index_prompt",
+      "sensory_debug_working_prompt",
+      "sensory_clear_workspace_index"
+    ],
+    "skills": []
+  }
+}
