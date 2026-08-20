@@ -1,7 +1,7 @@
 {
   "name": "@local/sensory-memory",
-  "version": "0.6.0-debug-interfaces",
-  "description": "Scoped sensory memory with prompt-layer debug tools for DeepSeek Harness",
+  "version": "0.7.0-layered-v2",
+  "description": "Session sensory, workspace semipersistent projections, and evidence-gated memory bank for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -19,6 +19,16 @@
     "./sensory-tools": "./lib/sensory-tools.js",
     "./sensory-debug": "./lib/sensory-debug.js",
     "./sensory-maintenance": "./lib/sensory-maintenance.js",
+    "./memory-ledger": "./lib/memory-ledger.js",
+    "./memory-segmenter": "./lib/memory-segmenter.js",
+    "./memory-policy": "./lib/memory-policy.js",
+    "./semipersistent-layer": "./lib/semipersistent-layer.js",
+    "./memory-bank": "./lib/memory-bank.js",
+    "./memory-surface-projector": "./lib/memory-surface-projector.js",
+    "./layered-match-engine": "./lib/layered-match-engine.js",
+    "./memory-retrieval-planner": "./lib/memory-retrieval-planner.js",
+    "./memory-transition-reviewer": "./lib/memory-transition-reviewer.js",
+    "./layered-memory-runtime": "./lib/layered-memory-runtime.js",
     "./atomic-files": "./lib/atomic-files.js",
     "./engram-adapter": "./lib/engram-adapter.js",
     "./hash": "./lib/hash.js"
@@ -53,7 +63,10 @@
         "sensory_debug_cache_prompt",
         "sensory_debug_index_prompt",
         "sensory_debug_working_prompt",
-        "sensory_clear_workspace_index"
+        "sensory_clear_workspace_index",
+        "memory_layer_status",
+        "memory_bank_open",
+        "memory_forget"
       ],
       "skills": []
     }

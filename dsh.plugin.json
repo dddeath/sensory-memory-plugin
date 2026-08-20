@@ -1,8 +1,8 @@
 {
   "id": "sensory-memory",
-  "version": "0.6.0-debug-interfaces",
+  "version": "0.7.0-layered-v2",
   "main": "./lib/index.js",
-  "description": "Pre-step sensory memory injection with prompt-layer debug and scoped cleanup tools",
+  "description": "Layered Memory v2 with session sensory, workspace semipersistent projections, and evidence-gated bank",
   "engines": {
     "dsh": ">=0.0.1"
   },
@@ -19,7 +19,10 @@
       "sensory_debug_cache_prompt",
       "sensory_debug_index_prompt",
       "sensory_debug_working_prompt",
-      "sensory_clear_workspace_index"
+      "sensory_clear_workspace_index",
+      "memory_layer_status",
+      "memory_bank_open",
+      "memory_forget"
     ],
     "skills": []
   }

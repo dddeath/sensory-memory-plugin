@@ -3,10 +3,28 @@
       name: '@local/sensory-memory'
       config:
         indexDir: !!js dshHomePath('sensory-index')
-        indexScope: global
+        indexScope: session
         journalCompactAfter: 2000
-        cacheMinConfidence: 0.6
+        trustedEvidenceTools: []
+        userGlobalEnabled: true
+        candidateLimit: 32
+        evidenceCatalogLimit: 3
+        relevanceThreshold: 0.70
+        evidenceQualityThreshold: 0.80
+        ambiguityMargin: 0.15
+        workingInactiveTurns: 4
+        semiAssociationTurns: 8
+        semiAssociationCount: 2
+        bankAssociationCount: 3
+        bankSessionCount: 2
+        semiInactiveWorkspaceTurns: 12
+        semiInactiveHours: 24
+        semiActivationFloor: -1.5
+        contextPressureRatio: 0.65
+        contextPressureTargetRatio: 0.55
+        semipersistentBudgetRatio: 0.20
+        transitionWaitMs: 5000
         llmProvider: opencode-go
         llmModel: deepseek-v4-flash
         llmReasoningEffort: high
-        cleanupLegacyOnStart: true
+        cleanupLegacyOnStart: false
