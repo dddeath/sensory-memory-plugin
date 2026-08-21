@@ -61,6 +61,55 @@ test('four inactive turns replace a complete historical segment with a session s
   assert.equal(ledger.list('sensoryEntries', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
 })
 
+test('surface replacement publishes an exact token-meter shadow price immediately before the replacement', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-shadow-price-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = new MemoryLedger(join(dir, 'ledger'))
+  const surface = new MemorySurfaceProjector({ ledger, tokenMeter: { estimateMessage: () => 11 } })
+  const s = session()
+  s.surface = { nodes: new Set([1, 2]) }
+  const segment = { id: 'segment-priced', sessionId: 's', firstSeq: 1, lastSeq: 2, sourceSeqs: [1, 2], surfaceRevision: 0 }
+  const result = surface.replaceSegment(s, segment, { text: 'checkpoint' })
+  const price = s.events.at(-2)
+  const replacement = s.events.at(-1)
+  assert.equal(result.ok, true)
+  assert.equal(price.type, 'compaction/prune')
+  assert.deepEqual(price.data.shadowedRange, { start: 1, end: 2 })
+  assert.deepEqual(price.data.shadowedSeqs, [1, 2])
+  assert.equal(price.data.shadowedTokenCount, 22)
+  assert.equal(replacement.type, 'user/message')
+  assert.deepEqual(replacement.surfaceOp, { op: 'replace', start: 1, end: 2 })
+  assert.deepEqual(replacement.sourceEventSeqs, [1, 2])
+})
+
+test('a visible DSH compact checkpoint migrates shadowed working segments to sensory and restores a root manifest', async (t) => {
+  const { runtime, ledger } = fixture(t)
+  const s = session()
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.ledger.drain('session:s', 1000)
+  const compact = {
+    seq: 3,
+    time: 3,
+    type: 'user/message',
+    data: { id: 'compact-1', role: 'user', content: [{ type: 'text', text: '<compacted-summary>summary</compacted-summary>' }], source: { kind: 'plugin', plugin: 'compact', compactionId: 'c1' } },
+    surfaceOp: { op: 'replace', start: 1, end: 2 },
+  }
+  s.events.push(compact)
+  s.surface = { nodes: new Set([3]) }
+  s.deriveMessages = () => [compact.data]
+  const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  const segment = ledger.list('sourceSegments', { scopeKind: 'session', scopeId: 's' })[0]
+  assert.equal(segment.state, 'sensory')
+  assert.equal(segment.replacementLineage.at(-1).transition, 'external-compaction')
+  assert.equal(segment.replacementLineage.at(-1).compactionId, 'c1')
+  assert.equal(ledger.list('sensoryEntries', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
+  assert.equal(decision.messages[0].source.purpose, 'sensory-root-manifest')
+  assert.equal(runtime.status('s', 'w').stats.externalCompactionToSensory, 1)
+  assert.equal(runtime.status('s', 'w').transitions[0].transition, 'external-compaction')
+})
+
 test('segmenter assigns user messages to the active turn when bridge seed stores turn only on turn/start', async (t) => {
   const { runtime } = fixture(t)
   const s = session()
