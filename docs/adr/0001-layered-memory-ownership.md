@@ -20,6 +20,7 @@ DSH already provides two distinct durable mechanisms: the raw append-only sessio
 6. The semipersistent layer is rendered as one plugin-owned user snapshot before the current real user input. Historical tool activity is serialized as inert text and metadata.
 7. Passive candidate generation, catalog exposure, automatic injection, and `sensory_recall` do not increase association. Only explicit back-reference/open or verified answer use does.
 8. `llm/stream` is observation-only. Ambiguous transition and retrieval planning use bounded auxiliary calls before the provider request is frozen.
+9. Session sensory checkpoints carry source-bound retrieval terms derived only from trusted user/tool evidence. Summary-only automatic evidence must be re-read from the source mirror; an LLM retrieval plan selects candidate IDs but cannot waive deterministic relevance or provenance checks.
 
 ## Consequences
 
@@ -29,6 +30,7 @@ DSH already provides two distinct durable mechanisms: the raw append-only sessio
 - Plugin-authored surface replacements participate in DSH token accounting by publishing an immediately adjacent `compaction/prune` shadow price calculated by the injected `tokenMeter`; otherwise the bounded surface fold cannot subtract the hidden range.
 - A visible checkpoint with `source.kind=plugin` and `source.plugin=compact` is DSH-owned compaction. Any shadowed working segment is reconciled into session sensory with `external-compaction` lineage before the sensory root manifest is restored.
 - Workspace resolution should use `workspaceRegistry.resolveByPath(cwd)`; a normalized-path fallback is observable compatibility behavior, not a global scope.
+- A readable trusted label precedes extracted entity names for checkpoint titles. This prevents fallback IDs and generic response tokens such as `OK` from becoming self-reinforcing association anchors.
 
 ## Rejected alternatives
 
