@@ -26,6 +26,8 @@ DSH already provides two distinct durable mechanisms: the raw append-only sessio
 - Existing `sensoryCache` and `sensory_cache_status` remain as compatibility facades over semipersistent projections; cache-hit ranking is removed from the runtime path.
 - Existing global index content is not migrated into the new store because it contains known cross-session pollution. A single backup-and-clear cutover occurs only after isolated verification.
 - The plugin owns journal replay, surface revision lineage, pending queues, projection rebuilding after DSH compaction, and deterministic evidence gates.
+- Plugin-authored surface replacements participate in DSH token accounting by publishing an immediately adjacent `compaction/prune` shadow price calculated by the injected `tokenMeter`; otherwise the bounded surface fold cannot subtract the hidden range.
+- A visible checkpoint with `source.kind=plugin` and `source.plugin=compact` is DSH-owned compaction. Any shadowed working segment is reconciled into session sensory with `external-compaction` lineage before the sensory root manifest is restored.
 - Workspace resolution should use `workspaceRegistry.resolveByPath(cwd)`; a normalized-path fallback is observable compatibility behavior, not a global scope.
 
 ## Rejected alternatives
