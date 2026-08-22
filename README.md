@@ -1,15 +1,13 @@
-# @local/sensory-memory — Layered Memory v2
+# @local/sensory-memory — 分层记忆 v2
 
-The DSH raw event log is the source-text/audit truth, the versioned Layer Ledger
-is the layer-state truth, and the DSH surface is the current model view. Sensory
-memory is always session-local; semipersistent memory is a workspace record with
-per-session reference/full projections; the bank is workspace-scoped unless the
-user explicitly requests a global/cross-workspace memory.
+DSH 原始事件日志是原文与审计真源，带版本的 Layer Ledger 是层级状态真源，
+DSH surface 是模型当前看到的投影视图。感知记忆始终限制在当前会话；
+半持久记忆是工作区记录，并为每个会话建立引用投影或完整投影；记忆库默认
+属于工作区，只有用户明确要求“全局”或“跨工作区”时才进入用户全局作用域。
 
-The old `SemipersistentCache` export remains for direct compatibility tests, but
-the runtime path uses `SemipersistentLayer`: a complete context projection rather
-than hit-count ranking. Passive matching, catalog exposure, automatic injection,
-and `sensory_recall` have association weight zero.
+旧的 `SemipersistentCache` 导出继续用于直接兼容测试，但运行主路径使用
+`SemipersistentLayer`：它保存完整上下文投影，而不是按命中次数排序索引。
+被动匹配、目录曝光、自动注入和 `sensory_recall` 的关联权重均为 0。
 
 ## 阅读顺序与模块边界
 
@@ -52,65 +50,62 @@ npm.cmd run verify -- --out E:/deepseek_memory/results/my-run/plugin-verificatio
 记录不使用内容哈希、fingerprint 或外部服务；它只保存实际执行过程。
 `.audit/` 是本地运行证据目录，不进入 Git。
 
-## Request path
+## 请求执行路径
 
-- `agent/pre-step` drains pending transitions (at most five seconds), reconciles
-  surface lineage, synchronizes workspace references, invokes downstream DSH
-  compaction, then performs evidence-gated retrieval.
-- The fast path searches the current session sensory layer first and the bank
-  only when sensory evidence is insufficient. Ambiguity uses at most one
-  `memory-retrieval-plan`; the model may select only offered IDs and deterministic
-  code rechecks source and quality gates.
-- Qualified catalogs contain at most three entries. A semipersistent snapshot
-  contains all active full projections within its 20% input-budget share.
-- `llm/stream` is observation-only because DSH freezes the request.
-- The observation hook retains the latest complete provider request per recent
-  session for explicit debugging; it never changes the request.
-- Working-to-sensory and working-to-semipersistent transitions use public
-  `surfaceOp:replace`; raw events remain available and tool groups stay intact.
+- `agent/pre-step` 最多等待 5 秒让待处理迁移收敛，然后对账 surface
+  血缘、同步工作区引用、调用下游 DSH compaction，最后执行受证据门控的检索。
+- 快路径先检索当前会话感知层，仅在感知证据不足时检索记忆库。出现歧义时
+  每 step 最多调用一次 `memory-retrieval-plan`；模型只能选择已提供的候选
+  ID，确定性代码随后重新检查来源和质量门。
+- 合格目录最多包含 3 项。半持久快照包含全部活跃完整投影，但最多占输入
+  预算的 20%。
+- 因为 DSH 会冻结请求，`llm/stream` 只负责观测。
+- 观测 hook 为最近会话保留最新一次完整 provider 请求，供显式调试使用；
+  它不会改变请求。
+- 工作层迁移到感知层或半持久层时，使用公开的 `surfaceOp:replace`；原始
+  事件继续保留，tool-call/tool-result 组合保持完整。
 
-## Isolation
+## 作用域隔离
 
-Runtime `indexScope` is always `session`. A legacy `global` value is warned about
-and ignored; old global records are not imported into Layered v2.
+运行时 `indexScope` 始终为 `session`。旧配置中的 `global` 会产生迁移告警
+并被忽略；旧 global 记录不会导入 Layered v2。
 
-The provided `sensoryMaintenance` service exposes:
+插件提供的 `sensoryMaintenance` 服务暴露：
 
-- `drain(sessionId)` — wait for pending refinement and flush mutations.
-- `finalizeSession(sessionId)` — drain journal and pending layer transitions.
-- `dropScope(sessionId)` — remove that session's sensory entries and projections;
-  shared workspace records remain unless benchmark cleanup explicitly owns them.
+- `drain(sessionId)`：等待待处理精抽并刷新 mutation。
+- `finalizeSession(sessionId)`：等待 journal 和层级迁移收敛。
+- `dropScope(sessionId)`：删除该会话的感知条目和投影；共享工作区记录继续
+  保留，除非 Benchmark cleanup 明确拥有并清理它们。
 
-The bundled profile already sets `indexScope: session`. C additionally disables
-user-global memory and keeps per-question workspace/session isolation.
+随附 profile 已设置 `indexScope: session`。C 组还会关闭用户全局记忆，
+并保持每题工作区和会话隔离。
 
-## DSH debug tools
+## DSH 调试工具
 
-The plugin registers five explicit debug/maintenance tools in addition to the
-seven memory tools:
+除 7 个记忆工具外，插件还注册 5 个显式调试/维护工具：
 
-| Tool | Result |
+| 工具 | 返回内容 |
 |---|---|
-| `sensory_debug_last_prompt` | Last captured `system`, complete tool schemas, messages, request options, and aggregate attributes. `requestKind` selects `main`, `any`, or `auxiliary`. |
-| `sensory_debug_cache_prompt` | `[cache]` lines from the last sensory catalog plus hit counts, LRU, budget, confidence, and injection attributes. |
-| `sensory_debug_index_prompt` | Non-cache catalog lines plus entity records and index/matcher/injection properties. |
-| `sensory_debug_working_prompt` | Provider working messages with catalog snapshots excluded, per-message role/source/block/token fields, tool-call/result pairing, session fields, and demotion tracking. |
-| `sensory_clear_workspace_index` | Clears the active sensory index scope only when `confirm=true`, and returns before/after/removal counts. |
+| `sensory_debug_last_prompt` | 上次捕获的 `system`、完整工具 schema、messages、请求选项和汇总属性。`requestKind` 可选择 `main`、`any` 或 `auxiliary`。 |
+| `sensory_debug_cache_prompt` | 上次感知目录中的 `[cache]` 行，以及命中次数、LRU、预算、置信度和注入属性。 |
+| `sensory_debug_index_prompt` | 非 cache 目录行、实体记录，以及索引、matcher 和注入属性。 |
+| `sensory_debug_working_prompt` | 排除目录快照后的 provider 工作消息，并列出每条消息的 role/source/block/token、tool-call/result 配对、会话字段和降级跟踪状态。 |
+| `sensory_clear_workspace_index` | 仅在 `confirm=true` 时清理当前激活的感知索引作用域，并返回清理前、清理后和移除数量。 |
 
-Layered tools:
+分层记忆工具：
 
-| Tool | Result |
+| 工具 | 返回内容 |
 |---|---|
-| `memory_layer_status` | Working/sensory/semipersistent/bank counts, transitions, pending queues, activation and budget. |
-| `memory_bank_open` | Opens a verified bank record, records one strong association and activates a current-session projection. |
-| `memory_forget` | Tombstones a session/workspace/user-global memory while retaining raw DSH events. |
+| `memory_layer_status` | 工作层、感知层、半持久层和记忆库的数量、迁移、待处理队列、activation 和预算。 |
+| `memory_bank_open` | 展开一条已验证的记忆库记录，记一次强关联，并激活当前会话投影。 |
+| `memory_forget` | 为会话、工作区或用户全局记忆写入 tombstone，同时保留 DSH 原始事件。 |
 
-The four views and the clear record accept `output=conversation|document|both`.
-`documentPath` is optional and must remain inside the current DSH workspace;
-`.json` writes JSON and every other extension writes Markdown. With no path, the
-plugin writes Markdown under `results/sensory-debug/`.
+4 个调试视图和清理记录均支持 `output=conversation|document|both`。
+`documentPath` 可省略；提供时必须位于当前 DSH 工作区内。扩展名为 `.json`
+时写 JSON，其他扩展名写 Markdown。未提供路径时，插件写入
+`results/sensory-debug/`。
 
-Examples to send in DSH:
+可直接在 DSH 中发送：
 
 ```text
 请显式调用 sensory_debug_last_prompt，requestKind=main，output=both。
@@ -120,31 +115,27 @@ Examples to send in DSH:
 请调用 sensory_clear_workspace_index，confirm=true，output=both。
 ```
 
-The clear compatibility alias always targets the current session sensory layer
-and returns `deprecatedAlias=true`. Previous prompt snapshots, bank records and
-bridge traces remain historical evidence.
+兼容清理别名始终只指向当前会话感知层，并返回 `deprecatedAlias=true`。
+此前的 prompt 快照、记忆库记录和 Bridge trace 继续作为历史证据保留。
 
-Prompt capture retains at most `debugMaxSessions` recent sessions (default 32)
-to bound memory use. The capture duration is exposed as
-`attributes.debugCaptureDurationMs`.
+Prompt 捕获最多保留最近 `debugMaxSessions` 个会话，默认值为 32，以限制
+内存占用。捕获耗时通过 `attributes.debugCaptureDurationMs` 暴露。
 
-## Persistence and migration
+## 持久化与迁移
 
-- Mutations append to `mutations.jsonl` as
-  `{version,sequence,scopeId,collection,op,id,value}` and are fsynced.
-- Startup loads the compatible JSONL snapshot, replays the journal, repairs
-  only an incomplete final journal line, and reports interior corruption.
-- `journalCompactAfter` atomically writes new snapshots and truncates the
-  journal.
-- Cache and index files share the fsync/rename atomic writer.
-- `cleanupLegacyOnStart` now runs once: legacy files are copied into a versioned
-  backup directory and a versioned migration marker records statistics.
+- mutation 以 `{version,sequence,scopeId,collection,op,id,value}` 追加到
+  `mutations.jsonl`，并执行 fsync。
+- 启动时加载兼容 JSONL 快照、重放 journal；只有最后一行不完整时会修复，
+  journal 中间损坏会直接报告。
+- 达到 `journalCompactAfter` 后，原子写入新快照并截断 journal。
+- cache 与索引文件共用执行 fsync/rename 的原子写入器。
+- `cleanupLegacyOnStart` 现在只执行一次：旧文件复制到带版本的备份目录，
+  带版本的迁移标记记录迁移统计。
 
-## Verification
+## 验证
 
 ```powershell
 npm.cmd test
 ```
 
-The package declares zero runtime dependencies and does not alter DSH core or
-the engram source tree.
+插件声明的运行时依赖数量为 0，DSH 核心和 engram 源码树保持原样。
