@@ -11,6 +11,26 @@ the runtime path uses `SemipersistentLayer`: a complete context projection rathe
 than hit-count ranking. Passive matching, catalog exposure, automatic injection,
 and `sensory_recall` have association weight zero.
 
+## 阅读顺序与模块边界
+
+第一次阅读不需要从 30 个文件中猜入口，按下面顺序即可追踪一次请求：
+
+| 顺序 | 模块 | 单一职责 |
+|---:|---|---|
+| 1 | `lib/index.js` | 稳定公共入口：归一配置、安装 hook、集中导出公共 API。 |
+| 2 | `lib/plugin-services.js` | 仅负责创建、连接并向 DSH 注册服务；不处理请求。 |
+| 3 | `lib/install-layered-v2.js` | 把运行时、维护服务和工具挂到 DSH 生命周期。 |
+| 4 | `lib/layered-memory-runtime.js` | 编排 pre-step、turn-stopping、层级迁移和工具操作。 |
+| 5 | `lib/layered-memory-records.js` | 把原始 segment 转成可持久化的事实、检索特征和 sensory entry。 |
+| 6 | `lib/layered-match-engine.js` | 编排 session sensory → bank 检索、歧义门和目录渲染。 |
+| 7 | `lib/layered-match-support.js` | 纯词法、候选生成、评分和来源验证；不读取全局状态。 |
+| 8 | `lib/memory-retrieval-planner.js` | 只在快路径证据不足时生成一次受候选 ID 约束的检索计划。 |
+
+持久化和层级策略分别从 `memory-ledger.js`、`memory-policy.js`、
+`semipersistent-layer.js`、`memory-bank.js` 阅读。`match-engine.js`、
+`injection-engine.js` 和 `semipersistent-cache.js` 是阶段 1–4 的兼容 facade；
+Layered v2 主路径不会把旧 cache 当作新的半持久层实现。
+
 ## Request path
 
 - `agent/pre-step` drains pending transitions (at most five seconds), reconciles
