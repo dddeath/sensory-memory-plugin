@@ -1,4 +1,5 @@
 node_modules/
+.audit/
 coverage/
 *.log
 .DS_Store

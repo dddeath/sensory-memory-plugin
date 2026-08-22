@@ -31,6 +31,27 @@ and `sensory_recall` have association weight zero.
 `injection-engine.js` 和 `semipersistent-cache.js` 是阶段 1–4 的兼容 facade；
 Layered v2 主路径不会把旧 cache 当作新的半持久层实现。
 
+## 人类可执行审计入口
+
+在插件目录执行一条命令：
+
+```powershell
+npm.cmd run verify
+```
+
+该入口依次检查全部 `lib/*.js` 语法并运行完整测试套件。终端只显示
+通过/失败、文件数、测试数和审计文件位置；完整步骤、命令、开始/结束
+时间、耗时、退出码及原始测试输出写入 `.audit/plugin-verification-*.json`。
+
+需要把证据放进指定交付目录时：
+
+```powershell
+npm.cmd run verify -- --out E:/deepseek_memory/results/my-run/plugin-verification.json
+```
+
+记录不使用内容哈希、fingerprint 或外部服务；它只保存实际执行过程。
+`.audit/` 是本地运行证据目录，不进入 Git。
+
 ## Request path
 
 - `agent/pre-step` drains pending transitions (at most five seconds), reconciles

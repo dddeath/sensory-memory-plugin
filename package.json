@@ -36,6 +36,7 @@
   },
   "files": [
     "lib",
+    "scripts",
     "vendor",
     "cordis.patch.yml",
     "dsh.plugin.json",
@@ -74,6 +75,7 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
+    "verify": "node ./scripts/verify.mjs",
     "inspect:index": "node ./test/populate-index.mjs"
   },
   "license": "UNLICENSED",
