@@ -1,81 +1,81 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
 
-import { DemotionEngine, IndexSourceStore } from '../lib/demotion-engine.js'
-import { ExtractionEngine } from '../lib/extraction-engine.js'
-import { MatchEngine } from '../lib/match-engine.js'
-import { SensoryIndex } from '../lib/sensory-index.js'
 import { createSensoryToolDefinitions } from '../lib/sensory-tools.js'
+import { runtimeFixture, storeTurn, testSession } from './helpers/runtime-fixture.mjs'
 
 function fixture(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'sensory-tools-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const index = new SensoryIndex(dir)
-  const extractor = new ExtractionEngine()
-  const matcher = new MatchEngine(index)
-  const sourceStore = new IndexSourceStore(index)
-  const demoter = new DemotionEngine({ index, extractor, matcher, sourceStore })
-  const tools = new Map(createSensoryToolDefinitions({ index, matcher, extractor, sourceStore, demoter })
-    .map((tool) => [tool.name, tool]))
-  return { index, extractor, matcher, sourceStore, demoter, tools }
+  const services = runtimeFixture(t)
+  const tools = new Map(createSensoryToolDefinitions({
+    matcher: services.matcher,
+    cache: services.semi,
+    llmClient: null,
+    runtime: services.runtime,
+    ledger: services.ledger,
+    bank: services.bank,
+  }).map((tool) => [tool.name, tool]))
+  const session = testSession()
+  const exec = { turn: 2, cwd: 'E:/bench', agent: { cwd: 'E:/bench', session } }
+  return { ...services, tools, session, exec }
 }
 
-test('sensory_recall returns candidate entities and observations', async (t) => {
-  const { index, matcher, tools } = fixture(t)
-  index.addEntity({
-    name: '客户#3', observations: ['客户#3的偏好色是color-3'], keywords: ['客户', 'color-3'],
-    sourceRef: { sessionId: 's', seq: 3 },
-  })
-  index.flush()
-  matcher.markDirty()
-  const output = JSON.parse(await tools.get('sensory_recall').execute({ query: '客户#3', limit: 3 }))
-  assert.equal(output.candidates[0].entity, '客户#3')
-  assert.deepEqual(output.candidates[0].observations, ['客户#3的偏好色是color-3'])
-})
-
-test('sensory_open expands the indexed source text', async (t) => {
-  const { index, tools } = fixture(t)
-  const sourceRef = { sessionId: 's', seq: 9 }
-  index.addEntity({ name: '项目A', observations: ['项目A的部署端口是8081'], sourceRef })
-  index.writeSource(sourceRef, { text: '原文：项目A的部署端口是8081。' })
-  const output = JSON.parse(await tools.get('sensory_open').execute({ entity: '[[项目A]]' }))
-  assert.equal(output.found, true)
-  assert.equal(output.sources[0].content.text, '原文：项目A的部署端口是8081。')
-})
-
-test('sensory_store extracts and persists new entities', async (t) => {
-  const { index, tools } = fixture(t)
-  const output = JSON.parse(await tools.get('sensory_store').execute({ text: '请记住项目M的部署端口是8282。' }))
+test('sensory_store writes one chunk for a short text and records vector metadata', async (t) => {
+  const { tools, ledger, exec } = fixture(t)
+  const output = JSON.parse(await tools.get('sensory_store').execute({ text: '蓝灯塔的档案柜钥匙位于绿色盒子，验证短语是银杏-47。' }, exec))
   assert.equal(output.stored, true)
-  assert.ok(output.entityIds.length >= 1)
-  assert.equal(index.getEntityByName('项目M').observations[0], '项目M的部署端口是8282')
+  assert.equal(output.chunkIds.length, 1)
+  const stored = ledger.get('sensoryChunks', output.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
+  assert.equal(stored.kind, 'context-chunk')
+  assert.equal(stored.vector.dimensions, 128)
+  assert.equal('entities' in stored, false)
 })
 
-test('sensory_demote marks the selected round and adds it to the index', async (t) => {
-  const { index, demoter, tools } = fixture(t)
-  await demoter.onTurnEnd({
-    turn: 1,
-    sessionId: 's',
-    messages: [{ sourceSeq: 42, role: 'assistant', kind: 'message', text: '项目D的部署端口是6060。' }],
-  })
-  const output = JSON.parse(await tools.get('sensory_demote').execute({ sourceSeq: 42 }))
+test('sensory_recall returns chunks and sensory_open expands the exact source', async (t) => {
+  const { tools, exec } = fixture(t)
+  const stored = JSON.parse(await tools.get('sensory_store').execute({ text: '蓝灯塔的档案柜钥匙位于绿色盒子，验证短语是银杏-47。' }, exec))
+  const recalled = JSON.parse(await tools.get('sensory_recall').execute({ query: '蓝灯塔 档案柜钥匙 银杏-47', limit: 3 }, exec))
+  assert.equal(recalled.chunks[0].chunkId, stored.chunkIds[0])
+  assert.equal(recalled.chunks[0].vector.model, 'feature-hash-cjk-v1')
+  const opened = JSON.parse(await tools.get('sensory_open').execute({ chunk: stored.chunkIds[0] }, exec))
+  assert.equal(opened.found, true)
+  assert.match(opened.coreText, /银杏-47/)
+  assert.match(opened.sources[0].content.text, /银杏-47/)
+})
+
+test('sensory_demote replaces one tracked segment and persists chunk IDs', async (t) => {
+  const { tools, runtime, ledger, session, exec } = fixture(t)
+  await storeTurn(runtime, session, 1)
+  const output = JSON.parse(await tools.get('sensory_demote').execute({ sourceSeq: 1 }, exec))
   assert.equal(output.demoted, true)
-  assert.equal(demoter.state.tracked.find((item) => item.sourceSeq === 42).demoted, true)
-  assert.ok(index.getEntityByName('项目D'))
+  assert.equal(output.chunkIds.length >= 1, true)
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length >= 1, true)
 })
 
-test('sensory_status returns all required statistics', async (t) => {
-  const { index, demoter, tools } = fixture(t)
-  index.addEntity({ name: '客户#1', observations: ['客户#1的偏好色是blue'] })
-  await demoter.onTurnEnd({ turn: 1, sessionId: 's', messages: [] })
-  const output = JSON.parse(await tools.get('sensory_status').execute({}))
-  assert.deepEqual(Object.keys(output), [
-    'entityCount', 'relationCount', 'observationCount', 'roundsTracked', 'lastDemoted', 'lastInjection',
-  ])
-  assert.equal(output.entityCount, 1)
-  assert.equal(output.observationCount, 1)
-  assert.equal(output.lastInjection, null)
+test('sensory_status reports chunk-only layer counts and vector encoder state', async (t) => {
+  const { tools, exec } = fixture(t)
+  await tools.get('sensory_store').execute({ text: '项目M当前部署端口是8383。' }, exec)
+  const status = JSON.parse(await tools.get('sensory_status').execute({}, exec))
+  assert.equal(status.architecture, 'chunk-only-vector')
+  assert.equal(status.layerCounts.sensoryChunks, 1)
+  assert.equal(status.vectorEncoder.model, 'feature-hash-cjk-v1')
+  assert.equal(status.matcher.architecture, 'chunk-only-vector')
+})
+
+test('explicit update supersedes an older similar chunk without creating a fact record', async (t) => {
+  const { tools, exec, session, ledger } = fixture(t)
+  const old = JSON.parse(await tools.get('sensory_store').execute({ text: '项目M当前部署端口是8282。' }, exec))
+  session.events.push({ seq: 3, type: 'assistant/message', data: { message: { role: 'assistant', content: 'update boundary' } } })
+  const current = JSON.parse(await tools.get('sensory_store').execute({ text: '项目M当前部署端口更新为8383。' }, exec))
+  const oldChunk = ledger.get('sensoryChunks', old.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
+  const newChunk = ledger.get('sensoryChunks', current.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
+  assert.equal(oldChunk.temporalCurrent, false)
+  assert.equal(oldChunk.supersededBy, newChunk.id)
+  assert.deepEqual(newChunk.supersedes, [oldChunk.id])
+  assert.equal('canonicalFacts' in newChunk, false)
+})
+
+test('tool schemas expose chunk rather than entity parameters', (t) => {
+  const { tools } = fixture(t)
+  assert.deepEqual(Object.keys(tools.get('sensory_open').parameters.properties), ['chunk'])
+  assert.equal(tools.has('sensory_audit'), false)
 })

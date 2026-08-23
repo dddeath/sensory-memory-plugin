@@ -4,45 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { ExtractionEngine } from '../lib/extraction-engine.js'
-import { LayeredMatchEngine } from '../lib/layered-match-engine.js'
-import { LayeredMemoryRuntime } from '../lib/layered-memory-runtime.js'
-import { MemoryBank } from '../lib/memory-bank.js'
 import { MemoryLedger } from '../lib/memory-ledger.js'
-import { MemoryPolicy } from '../lib/memory-policy.js'
-import { MemoryRetrievalPlanner } from '../lib/memory-retrieval-planner.js'
-import { MemorySegmenter } from '../lib/memory-segmenter.js'
 import { MemorySurfaceProjector } from '../lib/memory-surface-projector.js'
-import { SemipersistentLayer } from '../lib/semipersistent-layer.js'
-import { SensoryIndex } from '../lib/sensory-index.js'
+import { runtimeFixture, testSession } from './helpers/runtime-fixture.mjs'
 
 function fixture(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'surface-runtime-v2-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const ledger = new MemoryLedger(join(dir, 'layered-v2'))
-  const policy = new MemoryPolicy()
-  const semi = new SemipersistentLayer({ ledger, policy })
-  const bank = new MemoryBank({ ledger, semipersistentLayer: semi })
-  const surface = new MemorySurfaceProjector({ ledger })
-  const matcher = new LayeredMatchEngine({ ledger, bank })
-  const planner = new MemoryRetrievalPlanner({ matcher, llm: null })
-  const index = new SensoryIndex(join(dir, 'index'), { legacyMirror: false })
-  const ctx = { workspaceRegistry: { async resolveByPath() { return { id: 'w' } } }, logger: { warn() {} }, llm: null }
-  const runtime = new LayeredMemoryRuntime({ ctx, ledger, segmenter: new MemorySegmenter(), policy, semipersistentLayer: semi, bank, surfaceProjector: surface, matcher, planner, index, extractor: new ExtractionEngine(), sourceStore: null, config: { contextWindow: 2000, maxOutputTokens: 200 } })
-  return { runtime, ledger, semi, bank, surface, matcher, index }
+  return runtimeFixture(t)
 }
 
 function session() {
-  const replacements = []
-  const events = [
-    { seq: 1, time: 1, type: 'user/message', data: { id: 'u1', role: 'user', turn: 1, content: [{ type: 'text', text: '项目M的部署端口是8282。' }], source: { kind: 'user' } }, surfaceOp: 'append' },
-    { seq: 2, time: 2, type: 'assistant/message', data: { turn: 1, message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: '已记录。' }], source: { kind: 'model' } } }, surfaceOp: 'append' },
-  ]
-  return {
-    id: 's', events, replacements,
-    deriveMessages() { return events.map((event) => event.type === 'assistant/message' ? event.data.message : event.data) },
-    append(type, data, options) { const event = { seq: events.length + 1, time: Date.now(), type, data, ...options }; events.push(event); replacements.push(event); return event },
-  }
+  return testSession()
 }
 
 test('four inactive turns replace a complete historical segment with a session sensory checkpoint', async (t) => {
@@ -58,7 +29,7 @@ test('four inactive turns replace a complete historical segment with a session s
   assert.equal(s.replacements[0].data.role, 'user')
   assert.equal(s.replacements[0].data.source.kind, 'plugin')
   assert.equal(s.replacements[0].data.source.purpose, 'sensory-checkpoint')
-  assert.equal(ledger.list('sensoryEntries', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
 })
 
 test('surface replacement publishes an exact token-meter shadow price immediately before the replacement', (t) => {
@@ -104,7 +75,7 @@ test('a visible DSH compact checkpoint migrates shadowed working segments to sen
   assert.equal(segment.state, 'sensory')
   assert.equal(segment.replacementLineage.at(-1).transition, 'external-compaction')
   assert.equal(segment.replacementLineage.at(-1).compactionId, 'c1')
-  assert.equal(ledger.list('sensoryEntries', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
   assert.equal(decision.messages[0].source.purpose, 'sensory-root-manifest')
   assert.equal(runtime.status('s', 'w').stats.externalCompactionToSensory, 1)
   assert.equal(runtime.status('s', 'w').transitions[0].transition, 'external-compaction')
@@ -141,12 +112,13 @@ test('a live turn number reused after benchmark seed selects only the latest tur
 })
 
 test('semipersistent snapshot and sensory catalog are plugin user messages immediately before the real user', async (t) => {
-  const { runtime, ledger, semi } = fixture(t)
+  const { runtime, ledger, semi, vectorEncoder } = fixture(t)
   const s = session()
   const agent = { cwd: 'E:/bench', session: s }
-  const seg = { id: 'semi1', segmentId: 'semi1', sessionId: 's', workspaceId: 'w', title: '项目S', turn: 1, sourceSeqs: [1], records: [{ seq: 1, role: 'user', text: '项目S端口是6060', blockKinds: ['text'] }], canonicalFacts: [{ subject: '项目S', predicate: '端口', value: '6060', current: true }], episodeSummary: '项目S端口是6060', evidenceQuality: 0.9, durability: 0.9, importance: 0.9, verifiedSource: true, associations: [], state: 'semipersistent' }
+  const seg = { id: 'semi1', segmentId: 'semi1', sessionId: 's', workspaceId: 'w', label: '项目S上下文', turn: 1, sourceSeqs: [1], records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目S端口是6060', blockKinds: ['text'] }], contextChunks: [], evidenceQuality: 0.9, durability: 0.9, importance: 0.9, verifiedSource: true, associations: [], state: 'semipersistent' }
   semi.promote(seg, { workspaceId: 'w', sessionId: 's', workspaceTurn: 1 })
-  ledger.upsert('sensoryEntries', { id: 'e1', title: '项目M', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', aliases: [], canonicalFacts: [{ subject: '项目M', predicate: '端口', value: '8282', current: true }], episodeSummary: '项目M端口8282', approvedEpisode: true, sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9, verifiedSource: true }, { scopeKind: 'session', scopeId: 's', id: 'e1' })
+  ledger.upsert('sourceSegments', { id: 'sensory-source', sessionId: 's', records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目M端口8282' }] }, { scopeKind: 'session', scopeId: 's', id: 'sensory-source' })
+  ledger.upsert('sensoryChunks', { id: 'chunk-m', kind: 'context-chunk', label: '项目M上下文', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', segmentId: 'sensory-source', coreText: '项目M端口8282', contextText: '项目M端口8282', vector: vectorEncoder.encodeSync('项目M端口8282'), sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true }, { scopeKind: 'session', scopeId: 's', id: 'chunk-m' })
   const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '项目M端口是多少' }], source: { kind: 'user' } }
   const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
   assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['semipersistent-snapshot', 'sensory-catalog', 'real-user'])
@@ -156,7 +128,7 @@ test('semipersistent snapshot and sensory catalog are plugin user messages immed
 test('unchanged semipersistent snapshots are reused and changed snapshots supersede the old surface event', (t) => {
   const { semi, surface } = fixture(t)
   const s = session()
-  const seg = { id: 'semi-revision', segmentId: 'semi-revision', sessionId: 's', workspaceId: 'w', title: '项目R', turn: 1, sourceSeqs: [1], records: [{ seq: 1, role: 'user', text: '项目R端口是7070', blockKinds: ['text'] }], canonicalFacts: [], episodeSummary: '项目R端口是7070', evidenceQuality: 0.9, durability: 0.9, importance: 0.9, verifiedSource: true, associations: [], state: 'semipersistent' }
+  const seg = { id: 'semi-revision', segmentId: 'semi-revision', sessionId: 's', workspaceId: 'w', label: '项目R上下文', turn: 1, sourceSeqs: [1], records: [{ seq: 1, role: 'user', text: '项目R端口是7070', blockKinds: ['text'] }], evidenceQuality: 0.9, durability: 0.9, importance: 0.9, verifiedSource: true, associations: [], state: 'semipersistent' }
   semi.promote(seg, { workspaceId: 'w', sessionId: 's', workspaceTurn: 1 })
   const first = semi.renderSnapshot('s', 'w', { budgetTokens: 500 })
   const prior = { id: 'snapshot-old', role: 'user', content: [{ type: 'text', text: first.prompt }], source: { kind: 'plugin', purpose: 'semipersistent-snapshot', snapshotRevision: first.snapshotRevision } }

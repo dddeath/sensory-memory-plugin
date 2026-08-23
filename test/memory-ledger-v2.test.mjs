@@ -15,10 +15,10 @@ function fixture(t) {
 test('Layer Ledger persists scoped records and replays the append-only journal', (t) => {
   const dir = fixture(t)
   const ledger = new MemoryLedger(dir, { journalCompactAfter: 100 })
-  ledger.upsert('sensoryEntries', { id: 'same', title: 'A' }, { scopeKind: 'session', scopeId: 's1', id: 'same' })
-  ledger.upsert('sensoryEntries', { id: 'same', title: 'B' }, { scopeKind: 'session', scopeId: 's2', id: 'same' })
-  assert.equal(ledger.list('sensoryEntries', { scopeKind: 'session', scopeId: 's1' })[0].title, 'A')
-  assert.equal(new MemoryLedger(dir).list('sensoryEntries', { scopeKind: 'session', scopeId: 's2' })[0].title, 'B')
+  ledger.upsert('sensoryChunks', { id: 'same', label: 'A' }, { scopeKind: 'session', scopeId: 's1', id: 'same' })
+  ledger.upsert('sensoryChunks', { id: 'same', label: 'B' }, { scopeKind: 'session', scopeId: 's2', id: 'same' })
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's1' })[0].label, 'A')
+  assert.equal(new MemoryLedger(dir).list('sensoryChunks', { scopeKind: 'session', scopeId: 's2' })[0].label, 'B')
   assert.match(readFileSync(join(dir, 'ledger.journal.jsonl'), 'utf8'), /"sequence":1/)
 })
 

@@ -1,20 +1,11 @@
 {
   "name": "@local/sensory-memory",
-  "version": "0.7.1-layered-v2-match-fix",
-  "description": "Session sensory, workspace semipersistent projections, and evidence-gated memory bank for DeepSeek Harness",
+  "version": "0.8.0-chunk-vector",
+  "description": "Chunk-only vector context offloading and layered projection for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./sensory-index": "./lib/sensory-index.js",
-    "./extraction-engine": "./lib/extraction-engine.js",
-    "./demotion-engine": "./lib/demotion-engine.js",
-    "./match-engine": "./lib/match-engine.js",
-    "./injection-engine": "./lib/injection-engine.js",
-    "./llm-extractor": "./lib/llm-extractor.js",
-    "./halu-mem-auditor": "./lib/halu-mem-auditor.js",
-    "./fallback-rewriter": "./lib/fallback-rewriter.js",
-    "./semipersistent-cache": "./lib/semipersistent-cache.js",
     "./stage4-llm": "./lib/stage4-llm.js",
     "./sensory-tools": "./lib/sensory-tools.js",
     "./sensory-debug": "./lib/sensory-debug.js",
@@ -22,22 +13,21 @@
     "./memory-ledger": "./lib/memory-ledger.js",
     "./memory-segmenter": "./lib/memory-segmenter.js",
     "./memory-policy": "./lib/memory-policy.js",
-    "./memory-retrieval-features": "./lib/memory-retrieval-features.js",
     "./semipersistent-layer": "./lib/semipersistent-layer.js",
     "./memory-bank": "./lib/memory-bank.js",
     "./memory-surface-projector": "./lib/memory-surface-projector.js",
     "./layered-match-engine": "./lib/layered-match-engine.js",
     "./memory-retrieval-planner": "./lib/memory-retrieval-planner.js",
     "./memory-transition-reviewer": "./lib/memory-transition-reviewer.js",
+    "./context-chunker": "./lib/context-chunker.js",
+    "./context-utils": "./lib/context-utils.js",
+    "./vector-encoder": "./lib/vector-encoder.js",
     "./layered-memory-runtime": "./lib/layered-memory-runtime.js",
-    "./atomic-files": "./lib/atomic-files.js",
-    "./engram-adapter": "./lib/engram-adapter.js",
-    "./hash": "./lib/hash.js"
+    "./atomic-files": "./lib/atomic-files.js"
   },
   "files": [
     "lib",
     "scripts",
-    "vendor",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md"
@@ -59,7 +49,6 @@
         "sensory_store",
         "sensory_demote",
         "sensory_status",
-        "sensory_audit",
         "sensory_cache_status",
         "sensory_debug_last_prompt",
         "sensory_debug_cache_prompt",
@@ -76,7 +65,7 @@
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "verify": "node ./scripts/verify.mjs",
-    "inspect:index": "node ./test/populate-index.mjs"
+    "inspect:chunks": "node ./scripts/inspect-chunks.mjs"
   },
   "license": "UNLICENSED",
   "private": true

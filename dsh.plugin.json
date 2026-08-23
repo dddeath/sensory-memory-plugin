@@ -1,8 +1,8 @@
 {
   "id": "sensory-memory",
-  "version": "0.7.0-layered-v2",
+  "version": "0.8.0-chunk-vector",
   "main": "./lib/index.js",
-  "description": "Layered Memory v2 with session sensory, workspace semipersistent projections, and evidence-gated bank",
+  "description": "Chunk-only vector context offloading with session sensory and workspace projections",
   "engines": {
     "dsh": ">=0.0.1"
   },
@@ -13,7 +13,6 @@
       "sensory_store",
       "sensory_demote",
       "sensory_status",
-      "sensory_audit",
       "sensory_cache_status",
       "sensory_debug_last_prompt",
       "sensory_debug_cache_prompt",

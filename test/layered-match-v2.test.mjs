@@ -1,66 +1,114 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
 
-import { LayeredMatchEngine } from '../lib/layered-match-engine.js'
-import { MemoryBank } from '../lib/memory-bank.js'
-import { MemoryLedger } from '../lib/memory-ledger.js'
 import { MemoryRetrievalPlanner } from '../lib/memory-retrieval-planner.js'
+import { runtimeFixture } from './helpers/runtime-fixture.mjs'
 
-function fixture(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'layered-match-v2-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const ledger = new MemoryLedger(dir)
-  const bank = new MemoryBank({ ledger })
-  return { ledger, bank, matcher: new LayeredMatchEngine({ ledger, bank }) }
+function chunk(encoder, { id, sessionId = 's', segmentId = id, text, seq = 1, evidenceQuality = 0.9, updatedAt = 1 }) {
+  return {
+    id,
+    kind: 'context-chunk',
+    scopeKind: 'session',
+    scopeId: sessionId,
+    sessionId,
+    workspaceId: 'w',
+    segmentId,
+    label: id,
+    coreText: text,
+    contextText: text,
+    vector: encoder.encodeSync(text),
+    sourceRefs: [{ sessionId, seq }],
+    evidenceQuality,
+    verifiedSource: true,
+    temporalCurrent: true,
+    updatedAt,
+  }
 }
 
-function entry(id, title, sessionId, value = `${title} value`) {
-  return { id, title, scopeKind: 'session', scopeId: sessionId, sessionId, aliases: [], canonicalFacts: [{ subject: title, predicate: 'states', value, current: true }], sourceRefs: [{ sessionId, seq: 1 }], evidenceQuality: 0.9, verifiedSource: true, approvedEpisode: true, episodeSummary: value }
+function put(ledger, value, sourceText = value.coreText) {
+  ledger.upsert('sourceSegments', {
+    id: value.segmentId,
+    sessionId: value.sessionId,
+    records: [{ seq: value.sourceRefs[0].seq, role: 'user', sourceKind: 'user', text: sourceText }],
+  }, { scopeKind: 'session', scopeId: value.sessionId, id: value.segmentId })
+  ledger.upsert('sensoryChunks', value, { scopeKind: 'session', scopeId: value.sessionId, id: value.id })
 }
 
-test('fast matcher is session scoped and hard-rejects real pollution samples', (t) => {
-  const { ledger, matcher } = fixture(t)
-  ledger.upsert('sensoryEntries', entry('m1', '项目M', 's1', '项目M端口8282'), { scopeKind: 'session', scopeId: 's1', id: 'm1' })
-  ledger.upsert('sensoryEntries', entry('m2', '项目M', 's2', '项目M端口9999'), { scopeKind: 'session', scopeId: 's2', id: 'm2' })
-  for (const word of ['in', 'to', 'on', 'a', 'user', 'LLM']) ledger.upsert('sensoryEntries', entry(`noise-${word}`, word, 's1'), { scopeKind: 'session', scopeId: 's1', id: `noise-${word}` })
-  const result = matcher.retrieve('项目M端口', { sessionId: 's1', workspaceId: 'w' })
-  assert.equal(result.selected[0].id, 'm1')
-  assert.equal(result.candidates.some((item) => item.id === 'm2'), false)
-  assert.equal(matcher.retrieve('in to user LLM', { sessionId: 's1', workspaceId: 'w' }).qualified.length, 0)
+test('chunk matcher is session-scoped and returns one qualified chunk for direct content', (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'blue', sessionId: 's1', text: '蓝灯塔的档案柜钥匙在绿色盒子里，验证短语是银杏-47。' }))
+  put(ledger, chunk(vectorEncoder, { id: 'other', sessionId: 's2', text: '蓝灯塔钥匙在红色抽屉里。' }))
+  const result = matcher.retrieve('蓝灯塔 档案柜钥匙 银杏-47', { sessionId: 's1', workspaceId: 'w' })
+  assert.equal(result.selected[0].id, 'blue')
+  assert.deepEqual(result.candidates.map((item) => item.id), ['blue'])
+  assert.equal(result.selected[0].sourceValidation.reason, 'source-chunk-verified')
 })
 
-test('bank is searched only after sensory lacks qualified evidence', (t) => {
-  const { bank, matcher } = fixture(t)
-  bank.put({ content: '项目B的部署端口是7070', scopeKind: 'workspace', scopeId: 'w', sourceRefs: [{ sessionId: 'source', seq: 9 }], sessionId: 'source', workspaceId: 'w', explicit: true })
-  const result = matcher.retrieve('项目B的部署端口', { sessionId: 'target', workspaceId: 'w' })
-  assert.equal(result.searchedBank, true)
-  assert.equal(result.selected[0].layer, 'bank')
+test('empty candidates stay zero-injection and do not call the planner', async (t) => {
+  const { matcher } = runtimeFixture(t)
+  const result = matcher.retrieve('完全没有保存过的主题', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(result.candidates.length, 0)
+  assert.equal(result.needsPlanner, false)
+  const planner = new MemoryRetrievalPlanner({ matcher, llm: { async complete() { throw new Error('must not run') } } })
+  assert.equal(await planner.plan(result, { sessionId: 's', turn: 1, step: 1 }), null)
+  assert.equal(planner.status().llmCalls, 0)
 })
 
-test('slow planner selects only offered candidates and deterministic verification rejects invented IDs', async (t) => {
-  const { ledger, matcher } = fixture(t)
-  ledger.upsert('sensoryEntries', entry('c1', '共享项目', 's', '端口1111'), { scopeKind: 'session', scopeId: 's', id: 'c1' })
-  ledger.upsert('sensoryEntries', entry('c2', '共享项目', 's', '端口2222'), { scopeKind: 'session', scopeId: 's', id: 'c2' })
-  const result = matcher.retrieve('共享项目端口', { sessionId: 's', workspaceId: 'w' })
+test('an ordinary weak vector candidate does not trigger a retrieval-plan call', async (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'old-terminal', text: '终端历史记录包含 package 配置。' }))
+  const result = matcher.retrieve('请继续执行当前终端任务', { sessionId: 's', workspaceId: 'w' })
   assert.equal(result.sufficient, false)
-  const planner = new MemoryRetrievalPlanner({ matcher, llm: { async complete() { return JSON.stringify({ resolvedQuery: '共享项目当前端口', entityHints: ['共享项目'], timeConstraint: { kind: 'current', from: null, to: null }, selectedCandidateIds: ['invented', 'c1'], needOpen: true, confidence: 0.8 }) } } })
-  const planned = await planner.plan(result, { sessionId: 's', turn: 1, step: 1, taskStateRevision: 1 })
-  assert.deepEqual(planned.plan.selectedCandidateIds, ['c1'])
-  assert.equal(planned.selected.every((item) => result.candidates.some((candidate) => candidate.id === item.id)), true)
+  assert.equal(result.needsPlanner, false)
+  const planner = new MemoryRetrievalPlanner({ matcher, llm: { async complete() { throw new Error('must not run') } } })
+  assert.equal(await planner.plan(result, { sessionId: 's', turn: 2 }), null)
 })
 
-test('coreference, temporal wording, and summary-only checkpoints force one slow-path decision', (t) => {
-  const { ledger, matcher } = fixture(t)
-  ledger.upsert('sensoryEntries', entry('fact', '项目T', 's', '项目T端口是9000'), { scopeKind: 'session', scopeId: 's', id: 'fact' })
-  const coreference = matcher.retrieve('项目T现在的端口还是那个吗', { sessionId: 's', workspaceId: 'w' })
-  assert.equal(coreference.sufficient, false)
-  assert.equal(coreference.slowPathReasons.includes('coreference'), true)
-  assert.equal(coreference.slowPathReasons.includes('temporal-constraint'), true)
-  ledger.upsert('sensoryEntries', { ...entry('summary', '检查点Q', 's'), canonicalFacts: [], episodeSummary: '检查点Q只有摘要' }, { scopeKind: 'session', scopeId: 's', id: 'summary' })
-  const summary = matcher.retrieve('检查点Q', { sessionId: 's', workspaceId: 'w' })
-  assert.equal(summary.sufficient, false)
-  assert.equal(summary.slowPathReasons.includes('checkpoint-summary-without-answer'), true)
+test('a unique current chunk does not call planner merely because query says current', (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'current', text: '项目M当前部署端口是8383。' }))
+  const result = matcher.retrieve('项目M当前部署端口', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(result.sufficient, true)
+  assert.equal(result.needsPlanner, false)
+  assert.deepEqual(result.selected.map((item) => item.id), ['current'])
+})
+
+test('coreference uses one compact planner call per user turn and rejects invented IDs', async (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'blue', text: '蓝灯塔的档案柜钥匙在绿色盒子里。' }))
+  const result = matcher.retrieve('上次那个钥匙在哪里', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(result.needsPlanner, true)
+  let calls = 0
+  const llm = {
+    async complete(_prompt, options) {
+      calls += 1
+      assert.equal(options.reasoningEffort, 'off')
+      return JSON.stringify({ resolvedQuery: '蓝灯塔 档案柜钥匙 绿色盒子', chunkHints: ['蓝灯塔'], selectedCandidateIds: ['invented', 'blue'], needOpen: true, confidence: 0.8 })
+    },
+  }
+  const planner = new MemoryRetrievalPlanner({ matcher, llm })
+  const first = await planner.plan(result, { sessionId: 's', turn: 2, step: 1, taskStateRevision: 1 })
+  const second = await planner.plan(result, { sessionId: 's', turn: 2, step: 2, taskStateRevision: 1 })
+  assert.equal(first.verified, true)
+  assert.deepEqual(first.selected.map((item) => item.id), ['blue'])
+  assert.equal(second, null)
+  assert.equal(calls, 1)
+})
+
+test('source mismatch and low evidence quality keep chunks out of automatic evidence', (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'mismatch', text: '项目M部署端口是8282。' }), '完全无关的原始消息')
+  put(ledger, chunk(vectorEncoder, { id: 'low', text: '项目N部署端口是8383。', evidenceQuality: 0.4, seq: 2 }))
+  assert.equal(matcher.retrieve('项目M部署端口', { sessionId: 's', workspaceId: 'w' }).selected.length, 0)
+  assert.equal(matcher.retrieve('项目N部署端口', { sessionId: 's', workspaceId: 'w' }).selected.length, 0)
+})
+
+test('catalog renders chunk IDs, excerpts and source seq instead of entities', (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, chunk(vectorEncoder, { id: 'blue', text: '蓝灯塔的档案柜钥匙在绿色盒子里。', seq: 9 }))
+  const result = matcher.retrieve('蓝灯塔 档案柜钥匙 绿色盒子', { sessionId: 's', workspaceId: 'w' })
+  const catalog = matcher.renderCatalog(result.selected)
+  assert.match(catalog.prompt, /\[\[chunk:blue\]\]/)
+  assert.match(catalog.prompt, /\[seq 9-9\]/)
+  assert.doesNotMatch(catalog.prompt, /实体|canonical/)
 })

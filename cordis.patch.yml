@@ -12,6 +12,13 @@
         relevanceThreshold: 0.70
         evidenceQualityThreshold: 0.80
         ambiguityMargin: 0.15
+        vectorProvider: feature-hash
+        vectorDimensions: 384
+        vectorCandidateThreshold: 0.18
+        plannerCandidateFloor: 0.45
+        chunkTargetTokens: 320
+        chunkMaxTokens: 448
+        chunkOverlapTokens: 48
         workingInactiveTurns: 4
         semiAssociationTurns: 8
         semiAssociationCount: 2

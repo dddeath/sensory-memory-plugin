@@ -41,10 +41,15 @@ function testCounts(output) {
 }
 
 async function syntaxStep() {
-  const files = (await readdir(join(pluginRoot, 'lib'), { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
-    .map((entry) => join(pluginRoot, 'lib', entry.name))
-    .sort()
+  const files = []
+  for (const folder of ['lib', 'scripts']) {
+    for (const entry of await readdir(join(pluginRoot, folder), { withFileTypes: true })) {
+      if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.mjs'))) {
+        files.push(join(pluginRoot, folder, entry.name))
+      }
+    }
+  }
+  files.sort()
   const startedAt = new Date()
   const failures = []
   for (const file of files) {
@@ -53,7 +58,7 @@ async function syntaxStep() {
   }
   return {
     name: 'syntax',
-    command: 'node --check lib/*.js (one file at a time)',
+    command: 'node --check lib/* scripts/* (one file at a time)',
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAt.getTime(),

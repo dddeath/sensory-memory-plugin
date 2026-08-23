@@ -1,45 +1,51 @@
-# ADR 0001: Layered Memory v2 ownership and surface projection
+# ADR 0001：分层记忆归属、Chunk 与 Surface 投影
 
-- Status: Accepted
-- Date: 2026-08-21
-- Decision owners: DSH Layered Memory v2 task
+- 状态：已接受，2026-08-24 追加 Chunk-only 修正
+- 适用版本：`0.8.0-chunk-vector`
 
-## Context
+## 背景
 
-The v0.6 implementation combined a scoped sensory index with a hit-count cache. That cache only reordered matched catalog rows; it was not a working-memory-like context layer. Passive matching also changed hit counts, allowing broad lexical matches to promote low-quality records. A global sensory mode admitted cross-session pollution.
+旧实现把同一段上下文按抽取结果复制成多条记录，短文本也可能产生大量近重复条目。被动命中又会增加计数，最终让碎片反复进入目录和半持久层。
 
-DSH already provides two distinct durable mechanisms: the raw append-only session event log and a derived surface maintained by `surfaceOp`. The plugin needs a separate durable account of memory-layer ownership without changing DSH core.
+DSH 已经提供两类权威数据：原始 append-only session event log，以及由 `surfaceOp` 维护的模型可见 surface。插件只需要记录层级归属和可追溯的上下文块，不需要再建立另一套实体或事实图。
 
-## Decision
+## 决定
 
-1. Sensory memory is session-scoped only. Archive freezes it; resume/unarchive restores it; dispose drains but does not delete it.
-2. Semipersistent memory is a workspace record with per-session `reference`, `full-projection`, or `inactive` state. Cross-session exposure begins as a sensory reference and has zero association weight.
-3. The memory bank is workspace-scoped by default. User-global writes require explicit global/cross-workspace language and may be disabled by profile.
-4. DSH raw events are the source-text/audit truth. The plugin Layer Ledger journal is the layer-state truth. DSH surface is only the current model view.
-5. Working-to-sensory and working-to-semipersistent transitions use public `Session.append` replacement events. Raw source events remain intact. Complete tool-call/result transactions are never split.
-6. The semipersistent layer is rendered as one plugin-owned user snapshot before the current real user input. Historical tool activity is serialized as inert text and metadata.
-7. Passive candidate generation, catalog exposure, automatic injection, and `sensory_recall` do not increase association. Only explicit back-reference/open or verified answer use does.
-8. `llm/stream` is observation-only. Ambiguous transition and retrieval planning use bounded auxiliary calls before the provider request is frozen.
-9. Session sensory checkpoints carry source-bound retrieval terms derived only from trusted user/tool evidence. Summary-only automatic evidence must be re-read from the source mirror; an LLM retrieval plan selects candidate IDs but cannot waive deterministic relevance or provenance checks.
+1. 运行时唯一检索单元是 `ContextChunk`。插件不创建实体、别名、关系、观察或 canonical fact。
+2. `coreText` 是不重叠的权威正文；`contextText` 可携带标题、表头和相邻 overlap，只用于向量编码。
+3. 每个卸载 chunk 保存一个向量及其 provider、model 和 dimensions。默认编码器零依赖；可通过本地 HTTP sidecar 使用小型向量模型。
+4. 感知层只属于当前 session。归档冻结，恢复会话时继续使用；dispose 只 drain，不删除。
+5. 半持久层保存 workspace 记录，并为每个 session 建立 `reference`、`full-projection` 或 `inactive` 投影。跨会话初始引用的关联权重为零。
+6. 记忆库默认属于 workspace。只有明确的全局/跨工作区指令才写 user-global，且 profile 可以关闭它。
+7. DSH raw events 是原文和审计真源；Layer Ledger journal 是层级状态真源；DSH surface 只是当前模型视图。
+8. 工作层卸载通过公开 `Session.append(...surfaceOp.replace)` 完成。原始事件继续保留，tool-call/result 事务不被拆开。
+9. 半持久层以 plugin-owned user snapshot 放在本轮真实 user 消息前；历史工具活动只序列化为普通文本和元数据。
+10. 候选生成、向量命中、目录曝光、自动插入和 `sensory_recall` 都不增加关联。只有显式 open 或最终答案可验证地使用 chunk 才算强关联。
+11. `llm/stream` 只读。只有已有可用候选并存在真实指代、时态或歧义问题时，才在同一 user turn 调用一次 `memory-retrieval-plan`。
+12. 向量只负责候选和相关度。自动证据仍必须通过 session scope、sourceRefs 回读、evidenceQuality、冲突和 temporal current 检查。
 
-## Consequences
+## 结果
 
-- Existing `sensoryCache` and `sensory_cache_status` remain as compatibility facades over semipersistent projections; cache-hit ranking is removed from the runtime path.
-- Existing global index content is not migrated into the new store because it contains known cross-session pollution. A single backup-and-clear cutover occurs only after isolated verification.
-- The plugin owns journal replay, surface revision lineage, pending queues, projection rebuilding after DSH compaction, and deterministic evidence gates.
-- Plugin-authored surface replacements participate in DSH token accounting by publishing an immediately adjacent `compaction/prune` shadow price calculated by the injected `tokenMeter`; otherwise the bounded surface fold cannot subtract the hidden range.
-- A visible checkpoint with `source.kind=plugin` and `source.plugin=compact` is DSH-owned compaction. Any shadowed working segment is reconciled into session sensory with `external-compaction` lineage before the sensory root manifest is restored.
-- Workspace resolution should use `workspaceRegistry.resolveByPath(cwd)`; a normalized-path fallback is observable compatibility behavior, not a global scope.
-- A readable trusted label precedes extracted entity names for checkpoint titles. This prevents fallback IDs and generic response tokens such as `OK` from becoming self-reinforcing association anchors.
+- `sensoryCache` 与 `sensory_cache_status` 仅是半持久投影的兼容名称，不再表示命中排序 cache。
+- 旧 global 索引不进入 `chunk-memory-v1`；它不会自动迁移到新运行路径。
+- Markdown 表格按完整行切分，代码按函数或类切分，overlap 不复制进 `coreText`。
+- 明确更新语句可以让同一 session 内的旧相似 chunk 标记为 `superseded`；旧 chunk 仍保留供审计，但退出当前检索。
+- Feature hash 只用于本地向量槽位计算，不是 SHA 完整性清单或运行环境防御。
 
-## Rejected alternatives
+## 未采用的方案
 
-- Keep global sensory with filtering: rejected because it preserves an incorrect ownership boundary.
-- Treat semipersistent memory as top-N matched index rows: rejected because it does not provide stable contextual working state.
-- Mutate frozen `llm/stream` requests: rejected because DSH prompt assembly is already complete at that seam.
-- Delete raw events during demotion: rejected because it destroys auditability and recovery.
-- Count exposure as use: rejected because it creates self-reinforcing pollution.
+- 保留 global sensory 再过滤：归属边界仍然错误。
+- 把半持久层做成 top-N 索引行：它不是稳定上下文。
+- 在冻结后的 `llm/stream` 修改消息：请求装配已经完成。
+- 在卸载时删除 raw events：会失去审计和恢复能力。
+- 把候选曝光算作使用：会制造自强化污染。
+- 用向量值本身充当永久主键：模型或维度切换会改变向量；稳定 chunk ID 与向量元数据应分开保存。
 
-## Verification
+## 验证入口
 
-See `E:\deepseek_memory\results\layered-memory-v2\04-verification.json` and `05-final-report.md`.
+```powershell
+cd E:\deepseek_memory\sensory-memory-plugin
+npm test
+npm run verify -- --out E:\deepseek_memory\results\layered-memory-v2\chunk-only-vector\02-verification.json
+npm run inspect:chunks
+```

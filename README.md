@@ -1,141 +1,263 @@
-# @local/sensory-memory — 分层记忆 v2
+# DSH Chunk-only Vector Memory
 
-DSH 原始事件日志是原文与审计真源，带版本的 Layer Ledger 是层级状态真源，
-DSH surface 是模型当前看到的投影视图。感知记忆始终限制在当前会话；
-半持久记忆是工作区记录，并为每个会话建立引用投影或完整投影；记忆库默认
-属于工作区，只有用户明确要求“全局”或“跨工作区”时才进入用户全局作用域。
+这是一个面向**有限上下文 Agent**的最小分层记忆原型。运行时只处理一种检索对象：
 
-旧的 `SemipersistentCache` 导出继续用于直接兼容测试，但运行主路径使用
-`SemipersistentLayer`：它保存完整上下文投影，而不是按命中次数排序索引。
-被动匹配、目录曝光、自动注入和 `sensory_recall` 的关联权重均为 0。
+> Context Chunk（上下文块）
 
-## 阅读顺序与模块边界
+插件不创建实体、别名、关系、观察或事实图。一次卸载文本先按结构切成少量 chunk，每个 chunk 只保存一份权威正文和一个向量编码。
 
-第一次阅读不需要从 30 个文件中猜入口，按下面顺序即可追踪一次请求：
+## 1. 为什么改成 chunk-only
 
-| 顺序 | 模块 | 单一职责 |
-|---:|---|---|
-| 1 | `lib/index.js` | 稳定公共入口：归一配置、安装 hook、集中导出公共 API。 |
-| 2 | `lib/plugin-services.js` | 仅负责创建、连接并向 DSH 注册服务；不处理请求。 |
-| 3 | `lib/install-layered-v2.js` | 把运行时、维护服务和工具挂到 DSH 生命周期。 |
-| 4 | `lib/layered-memory-runtime.js` | 编排 pre-step、turn-stopping、层级迁移和工具操作。 |
-| 5 | `lib/layered-memory-records.js` | 把原始 segment 转成可持久化的事实、检索特征和 sensory entry。 |
-| 6 | `lib/layered-match-engine.js` | 编排 session sensory → bank 检索、歧义门和目录渲染。 |
-| 7 | `lib/layered-match-support.js` | 纯词法、候选生成、评分和来源验证；不读取全局状态。 |
-| 8 | `lib/memory-retrieval-planner.js` | 只在快路径证据不足时生成一次受候选 ID 约束的检索计划。 |
+旧实现会先从一段文本抽取很多名字，再为每个名字复制同一段观察文本。一轮 sensory_store 因此可能生成几十条高度重复记录，候选上限很快被碎片占满。
 
-持久化和层级策略分别从 `memory-ledger.js`、`memory-policy.js`、
-`semipersistent-layer.js`、`memory-bank.js` 阅读。`match-engine.js`、
-`injection-engine.js` 和 `semipersistent-cache.js` 是阶段 1–4 的兼容 facade；
-Layered v2 主路径不会把旧 cache 当作新的半持久层实现。
+现在的规则是：
 
-## 人类可执行审计入口
+- 短文本通常得到 1 个 chunk；
+- 长文本先按文档结构拆分，再按 token 预算合并或截断；
+- Markdown 表格以完整行作为边界，表头只加入向量上下文；
+- 代码优先按 class、function、method 拆分；
+- overlap 只进入 contextText，不会复制到权威 coreText；
+- 一个 chunk 对应一个向量和一个目录入口。
 
-在插件目录执行一条命令：
+## 2. 一个 chunk 长什么样
 
-```powershell
-npm.cmd run verify
-```
+~~~json
+{
+  "id": "seg-s-1-1:chunk:001",
+  "kind": "context-chunk",
+  "sessionId": "s",
+  "workspaceId": "w",
+  "segmentId": "seg-s-1-1",
+  "sourceRefs": [{"sessionId": "s", "seq": 1}],
+  "format": "text",
+  "headingPath": [],
+  "coreText": "[seq 1] user: 项目M当前部署端口是8383。",
+  "contextText": "[seq 1] user: 项目M当前部署端口是8383。",
+  "tokenCount": 24,
+  "vector": {
+    "provider": "builtin",
+    "model": "feature-hash-cjk-v1",
+    "dimensions": 384,
+    "values": ["..."]
+  },
+  "evidenceQuality": 0.85,
+  "temporalCurrent": true,
+  "supersededBy": null
+}
+~~~
 
-该入口依次检查全部 `lib/*.js` 语法并运行完整测试套件。终端只显示
-通过/失败、文件数、测试数和审计文件位置；完整步骤、命令、开始/结束
-时间、耗时、退出码及原始测试输出写入 `.audit/plugin-verification-*.json`。
+- coreText：互不重叠的权威内容，用于展开、审计和来源核对。
+- contextText：送入向量编码器的文本，可以附带标题、表头和前后 overlap。
+- sourceRefs：指向 DSH 原始事件的 sessionId + seq。
+- vector：向量提供者、模型、维度和数值。
+- temporalCurrent：当前版本标志；明确更新语句可使同会话中的旧相似 chunk 退出当前检索。
 
-需要把证据放进指定交付目录时：
+## 3. 每轮完整流程
 
-```powershell
-npm.cmd run verify -- --out E:/deepseek_memory/results/my-run/plugin-verification.json
-```
+~~~text
+DSH 原始 user / assistant / tool 事件
+        │
+        ▼
+MemorySegmenter：组成完整 turn segment，保护 tool-call/result 边界
+        │
+        ▼
+ContextChunker：结构拆分 → token 合并/截断 → 仅向量上下文 overlap
+        │
+        ▼
+VectorEncoder：每个 chunk 生成一个向量
+        │
+        ▼
+工作层保持原消息
+        │
+        ├─ 低活性 / 上下文压力 ─→ session sensoryChunks
+        ├─ 高价值 / 多次强关联 ─→ workspace 半持久完整投影
+        └─ 明确“记住”或长期价值 ─→ workspace / user-global bankChunks
 
-记录不使用内容哈希、fingerprint 或外部服务；它只保存实际执行过程。
-`.audit/` 是本地运行证据目录，不进入 Git。
+下一次 agent/pre-step：
+当前 user 查询 → query vector → session chunk 检索
+                         │ 无合格 chunk
+                         └─→ workspace / user-global bank chunk
+                         │ 仅在有可用候选且存在指代/歧义时
+                         └─→ 一次 memory-retrieval-plan
+                         ▼
+chunk 目录 + 半持久完整快照插入当轮真实 user 消息之前
+~~~
 
-## 请求执行路径
+被动候选、向量命中和目录曝光都不增加关联。以下事件才是强关联：
 
-- `agent/pre-step` 最多等待 5 秒让待处理迁移收敛，然后对账 surface
-  血缘、同步工作区引用、调用下游 DSH compaction，最后执行受证据门控的检索。
-- 快路径先检索当前会话感知层，仅在感知证据不足时检索记忆库。出现歧义时
-  每 step 最多调用一次 `memory-retrieval-plan`；模型只能选择已提供的候选
-  ID，确定性代码随后重新检查来源和质量门。
-- 合格目录最多包含 3 项。半持久快照包含全部活跃完整投影，但最多占输入
-  预算的 20%。
-- 因为 DSH 会冻结请求，`llm/stream` 只负责观测。
-- 观测 hook 为最近会话保留最新一次完整 provider 请求，供显式调试使用；
-  它不会改变请求。
-- 工作层迁移到感知层或半持久层时，使用公开的 `surfaceOp:replace`；原始
-  事件继续保留，tool-call/tool-result 组合保持完整。
+- 用户或模型显式调用 sensory_open(chunk)；
+- 显式调用 memory_bank_open(record)；
+- 最终答案实际使用了已验证 chunk 中的内容。
 
-## 作用域隔离
+## 4. 切分规则
 
-运行时 `indexScope` 始终为 `session`。旧配置中的 `global` 会产生迁移告警
-并被忽略；旧 global 记录不会导入 Layered v2。
+默认值：
 
-插件提供的 `sensoryMaintenance` 服务暴露：
+~~~yaml
+chunkTargetTokens: 320
+chunkMaxTokens: 448
+chunkOverlapTokens: 48
+~~~
 
-- `drain(sessionId)`：等待待处理精抽并刷新 mutation。
-- `finalizeSession(sessionId)`：等待 journal 和层级迁移收敛。
-- `dropScope(sessionId)`：删除该会话的感知条目和投影；共享工作区记录继续
-  保留，除非 Benchmark cleanup 明确拥有并清理它们。
+### 4.1 普通文本
 
-随附 profile 已设置 `indexScope: session`。C 组还会关闭用户全局记忆，
-并保持每题工作区和会话隔离。
+1. 优先按段落、句号、分号和列表边界切分。
+2. 相邻小块合并到 chunkTargetTokens。
+3. 单块超过 chunkMaxTokens 时继续切。
+4. 相邻正文不重叠。
 
-## DSH 调试工具
+### 4.2 Markdown
 
-除 7 个记忆工具外，插件还注册 5 个显式调试/维护工具：
+- 标题保存到 headingPath，并加入 contextText。
+- 同一标题下的相邻小段会合并。
+- fenced code 交给代码切分器。
+- 表格只在完整行边界切分。
+- 表头加入每个表格 chunk 的 contextText，不重复到 coreText。
 
-| 工具 | 返回内容 |
+### 4.3 代码
+
+- JavaScript / TypeScript：优先按 class、function、方法和箭头函数。
+- Python：优先按 class、def、async def。
+- 超大函数才在函数内部继续按 token 上限切分。
+
+## 5. 向量编码
+
+### 5.1 默认零依赖原型
+
+~~~yaml
+vectorProvider: feature-hash
+vectorDimensions: 384
+~~~
+
+feature-hash-cjk-v1 是可审计的本地特征向量，不是完整语义模型。这里的 hash 是向量槽位计算的一部分，不是 SHA 校验、交付清单或运行环境防御。
+
+### 5.2 本地小型模型
+
+生产试验可切换本地 HTTP sidecar，例如 [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)：
+
+~~~yaml
+vectorProvider: http
+vectorEndpoint: http://127.0.0.1:3901/embed
+vectorModel: BAAI/bge-small-zh-v1.5
+vectorTimeoutMs: 5000
+~~~
+
+插件只使用 Node 内置 http。sidecar 合同为：
+
+~~~http
+POST /embed
+Content-Type: application/json
+
+{"model":"BAAI/bge-small-zh-v1.5","texts":["第一段","第二段"]}
+~~~
+
+~~~json
+{"vectors":[[0.1,0.2],[0.3,0.4]]}
+~~~
+
+## 6. 召回规则
+
+候选来源是词法匹配与向量近邻的并集：
+
+~~~yaml
+candidateLimit: 32
+vectorCandidateThreshold: 0.18
+relevanceThreshold: 0.70
+evidenceQualityThreshold: 0.80
+evidenceCatalogLimit: 3
+ambiguityMargin: 0.15
+plannerCandidateFloor: 0.45
+~~~
+
+自动进入目录必须同时满足：
+
+1. effectiveRelevance 不低于 0.70；
+2. evidenceQuality 不低于 0.80；
+3. sourceRefs 可以回读到同一 session 的原始事件；
+4. chunk 不是旧版本、冲突版本或 tombstone；
+5. 第一名与独立来源第二名有足够分差，或只有一个合格 chunk。
+
+effectiveRelevance 取词法分和向量余弦相似度的较大值。向量只负责找候选，不替代来源、质量、时态和冲突判断。
+
+普通任务不会因为存在一个弱向量候选就调用辅助 LLM。memory-retrieval-plan 只在以下条件同时成立时调用：
+
+- 已有可读候选；
+- 快路径不足；
+- 存在指代、时间歧义、冲突或真实低分差；
+- 同一 user turn 尚未调用过 planner。
+
+planner 最多接收前 8 个紧凑 chunk 摘要，使用 reasoningEffort=off，且只能选择给定 chunk ID。
+
+## 7. DSH 工具
+
+| 工具 | 用途 |
 |---|---|
-| `sensory_debug_last_prompt` | 上次捕获的 `system`、完整工具 schema、messages、请求选项和汇总属性。`requestKind` 可选择 `main`、`any` 或 `auxiliary`。 |
-| `sensory_debug_cache_prompt` | 上次感知目录中的 `[cache]` 行，以及命中次数、LRU、预算、置信度和注入属性。 |
-| `sensory_debug_index_prompt` | 非 cache 目录行、实体记录，以及索引、matcher 和注入属性。 |
-| `sensory_debug_working_prompt` | 排除目录快照后的 provider 工作消息，并列出每条消息的 role/source/block/token、tool-call/result 配对、会话字段和降级跟踪状态。 |
-| `sensory_clear_workspace_index` | 仅在 `confirm=true` 时清理当前激活的感知索引作用域，并返回清理前、清理后和移除数量。 |
+| sensory_store({text}) | 按结构写入当前 session 的 chunk；短文本通常只写一条。 |
+| sensory_recall({query,limit}) | 只读返回候选 chunk 和词法/向量分数。 |
+| sensory_open({chunk}) | 展开 coreText、contextText、sourceRefs，并记一次强关联。 |
+| sensory_demote({sourceSeq}) | 把包含该 seq 的完整工作 segment 卸载为 chunk。 |
+| sensory_status() | 查看层级数量、matcher、chunker、vector encoder 和迁移统计。 |
+| sensory_cache_status() | 兼容名称；实际返回半持久 chunk 投影，不是旧排序 cache。 |
+| memory_layer_status() | 查看工作、感知 chunk、半持久投影和 bank chunk。 |
+| memory_bank_open({record}) | 展开 bank chunk，并记一次强关联。 |
+| memory_forget({target,scope}) | tombstone chunk；DSH 原始事件仍保留。 |
 
-分层记忆工具：
+调试入口：
 
-| 工具 | 返回内容 |
+| 工具 | 内容 |
 |---|---|
-| `memory_layer_status` | 工作层、感知层、半持久层和记忆库的数量、迁移、待处理队列、activation 和预算。 |
-| `memory_bank_open` | 展开一条已验证的记忆库记录，记一次强关联，并激活当前会话投影。 |
-| `memory_forget` | 为会话、工作区或用户全局记忆写入 tombstone，同时保留 DSH 原始事件。 |
+| sensory_debug_last_prompt | 完整 system + tools + messages。 |
+| sensory_debug_index_prompt | 当前目录中的 chunk、向量、分数、来源和 ledger 状态。 |
+| sensory_debug_cache_prompt | 半持久 chunk 快照与投影状态。 |
+| sensory_debug_working_prompt | 工作层消息、source、block 和 tool 配对。 |
+| sensory_clear_workspace_index | 兼容名称；只清当前 session 的 sensoryChunks。 |
 
-4 个调试视图和清理记录均支持 `output=conversation|document|both`。
-`documentPath` 可省略；提供时必须位于当前 DSH 工作区内。扩展名为 `.json`
-时写 JSON，其他扩展名写 Markdown。未提供路径时，插件写入
-`results/sensory-debug/`。
+大输出建议使用：
 
-可直接在 DSH 中发送：
+~~~text
+请调用 sensory_debug_index_prompt，output=document。
+~~~
 
-```text
-请显式调用 sensory_debug_last_prompt，requestKind=main，output=both。
-请调用 sensory_debug_cache_prompt，output=document。
-请调用 sensory_debug_index_prompt，output=conversation。
-请调用 sensory_debug_working_prompt，output=both。
-请调用 sensory_clear_workspace_index，confirm=true，output=both。
-```
+## 8. 人类可执行入口
 
-兼容清理别名始终只指向当前会话感知层，并返回 `deprecatedAlias=true`。
-此前的 prompt 快照、记忆库记录和 Bridge trace 继续作为历史证据保留。
+完整验证：
 
-Prompt 捕获最多保留最近 `debugMaxSessions` 个会话，默认值为 32，以限制
-内存占用。捕获耗时通过 `attributes.debugCaptureDurationMs` 暴露。
+~~~powershell
+cd E:\deepseek_memory\sensory-memory-plugin
+npm test
+npm run verify -- --out E:\deepseek_memory\results\chunk-memory-verification.json
+~~~
 
-## 持久化与迁移
+查看实际 chunk：
 
-- mutation 以 `{version,sequence,scopeId,collection,op,id,value}` 追加到
-  `mutations.jsonl`，并执行 fsync。
-- 启动时加载兼容 JSONL 快照、重放 journal；只有最后一行不完整时会修复，
-  journal 中间损坏会直接报告。
-- 达到 `journalCompactAfter` 后，原子写入新快照并截断 journal。
-- cache 与索引文件共用执行 fsync/rename 的原子写入器。
-- `cleanupLegacyOnStart` 现在只执行一次：旧文件复制到带版本的备份目录，
-  带版本的迁移标记记录迁移统计。
+~~~powershell
+cd E:\deepseek_memory\sensory-memory-plugin
+npm run inspect:chunks
+~~~
 
-## 验证
+指定独立 DSH_HOME：
 
-```powershell
-npm.cmd test
-```
+~~~powershell
+npm run inspect:chunks -- E:\deepseek_memory\.benchmark-dsh\c
+~~~
 
-插件声明的运行时依赖数量为 0，DSH 核心和 engram 源码树保持原样。
+输出包含 session 分组数量、chunk ID、sourceRefs、格式、token 数、向量 provider/model/dimensions 和权威正文预览。
+
+## 9. 主要模块
+
+| 模块 | 单一职责 |
+|---|---|
+| lib/context-chunker.js | 普通文本、Markdown、表格和代码的结构切分与相邻小块合并。 |
+| lib/vector-encoder.js | 内置特征向量和本地 HTTP 小模型适配器。 |
+| lib/layered-memory-records.js | 从完整 turn segment 生成 chunk 记录。 |
+| lib/layered-match-support.js | chunk 候选、词法/向量评分和来源核验。 |
+| lib/layered-match-engine.js | session 到 bank 的检索、门控和目录渲染。 |
+| lib/layered-memory-runtime.js | DSH pre-step / turn-stopping、迁移、投影和时态替代。 |
+| lib/memory-ledger.js | append-only chunk 状态真源。 |
+| lib/memory-surface-projector.js | 工作消息替换和当轮 plugin user 快照。 |
+| lib/semipersistent-layer.js | workspace 完整 chunk 投影。 |
+| lib/memory-bank.js | workspace / user-global bank chunk。 |
+| lib/sensory-tools.js | DSH 显式工具入口。 |
+| lib/sensory-debug.js | 人类可读、可落盘的 prompt 与 chunk 审计。 |
+
+插件运行时 npm 第三方依赖数量为 0，不修改 DSH 核心、Bridge、Benchmark runner 或 engram 源码。
