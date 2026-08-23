@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { MemoryLedger } from '../lib/memory-ledger.js'
 import { MemorySurfaceProjector } from '../lib/memory-surface-projector.js'
+import { inject } from '../lib/index.js'
 import { runtimeFixture, testSession } from './helpers/runtime-fixture.mjs'
 
 function fixture(t) {
@@ -15,6 +16,15 @@ function fixture(t) {
 function session() {
   return testSession()
 }
+
+test('headless activation keeps workspaceRegistry optional and falls back to normalized cwd identity', async (t) => {
+  const { runtime } = fixture(t)
+  delete runtime.ctx.workspaceRegistry
+  const resolved = await runtime.workspace({ cwd: 'E:/bench' })
+  assert.equal(inject.includes('workspaceRegistry'), false)
+  assert.equal(resolved.resolution, 'fallback-path')
+  assert.match(resolved.workspaceId, /bench/i)
+})
 
 test('four inactive turns replace a complete historical segment with a session sensory checkpoint', async (t) => {
   const { runtime, ledger } = fixture(t)

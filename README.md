@@ -243,6 +243,10 @@ npm run inspect:chunks -- E:\deepseek_memory\.benchmark-dsh\c
 
 输出包含 session 分组数量、chunk ID、sourceRefs、格式、token 数、向量 provider/model/dimensions 和权威正文预览。
 
+### Headless 兼容
+
+Web profile 提供 `workspaceRegistry` 时，插件使用其稳定 workspace ID。纯 headless profile 没有该服务时，插件使用规范化 cwd 作为 workspace ID；session 感知层仍按 sessionId 隔离。这个 fallback 是运行时已有路径，入口不会再把可选服务误声明为启动硬依赖。
+
 ## 9. 主要模块
 
 | 模块 | 单一职责 |
