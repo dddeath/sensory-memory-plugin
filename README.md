@@ -336,3 +336,16 @@ E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-202608
 | `tools/embedding-sidecar/` | 固定 E5 模型的本地服务。 |
 
 不修改 DSH 核心和 engram；插件 Node 第三方运行依赖为 0。
+
+## 12. 当前验证结论（2026-08-25）
+
+- 插件：68/68；Benchmark 合同：Node 3/3、Python 9/9；sidecar：2/2。
+- 无模型机制门：Parent 相对旧 flat chunk 减少 50.42%，平均 eligible 13.67、selected 2.25，整体与 4-hop fact recall 都是 1.0。
+- Held-out：8K 和 16K 下 C 分别比 A 高 0.2917、0.2167；32K 打平，4-hop 的 C32 比 A32 低 0.025。
+- 因宽上下文门未全通过，这一提交保留为可审计实验实现，没有安装到正常 3080，也没有清理正常索引。
+
+权威结果和失败边界：
+
+```text
+E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-20260825-01\03-final-report.md
+```
