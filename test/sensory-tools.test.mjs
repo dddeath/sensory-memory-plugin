@@ -19,13 +19,14 @@ function fixture(t) {
   return { ...services, tools, session, exec }
 }
 
-test('sensory_store writes one chunk for a short text and records vector metadata', async (t) => {
+test('sensory_store writes one parent for a short text and records child vector metadata', async (t) => {
   const { tools, ledger, exec } = fixture(t)
   const output = JSON.parse(await tools.get('sensory_store').execute({ text: '蓝灯塔的档案柜钥匙位于绿色盒子，验证短语是银杏-47。' }, exec))
   assert.equal(output.stored, true)
   assert.equal(output.chunkIds.length, 1)
   const stored = ledger.get('sensoryChunks', output.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
-  assert.equal(stored.kind, 'context-chunk')
+  assert.equal(stored.kind, 'context-parent')
+  assert.equal(stored.childSpans.length, 1)
   assert.equal(stored.vector.dimensions, 128)
   assert.equal('entities' in stored, false)
 })
@@ -51,14 +52,14 @@ test('sensory_demote replaces one tracked segment and persists chunk IDs', async
   assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length >= 1, true)
 })
 
-test('sensory_status reports chunk-only layer counts and vector encoder state', async (t) => {
+test('sensory_status reports parent-child layer counts and vector encoder state', async (t) => {
   const { tools, exec } = fixture(t)
   await tools.get('sensory_store').execute({ text: '项目M当前部署端口是8383。' }, exec)
   const status = JSON.parse(await tools.get('sensory_status').execute({}, exec))
-  assert.equal(status.architecture, 'chunk-only-vector')
+  assert.equal(status.architecture, 'parent-child-vector-v2')
   assert.equal(status.layerCounts.sensoryChunks, 1)
   assert.equal(status.vectorEncoder.model, 'feature-hash-cjk-v1')
-  assert.equal(status.matcher.architecture, 'chunk-only-vector')
+  assert.equal(status.matcher.architecture, 'parent-child-vector-v2')
 })
 
 test('explicit update supersedes an older similar chunk without creating a fact record', async (t) => {
@@ -70,7 +71,7 @@ test('explicit update supersedes an older similar chunk without creating a fact 
   const newChunk = ledger.get('sensoryChunks', current.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
   assert.equal(oldChunk.temporalCurrent, false)
   assert.equal(oldChunk.supersededBy, newChunk.id)
-  assert.deepEqual(newChunk.supersedes, [oldChunk.id])
+  assert.deepEqual(newChunk.supersedes, [`${oldChunk.id}:child:001`])
   assert.equal('canonicalFacts' in newChunk, false)
 })
 

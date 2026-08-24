@@ -66,10 +66,11 @@ test('bank separates workspace and user-global scope and tombstones immediately'
   assert.equal(bank.listVisible({ workspaceId: 'w2' }).some((item) => item.id === global.record.id), false)
 })
 
-test('explicit multi-clause memory remains one bank chunk with one vector', (t) => {
+test('explicit multi-clause memory remains one bank parent with child vectors', (t) => {
   const { bank } = fixture(t)
   const stored = bank.put({ content: '蓝灯塔测试场景的档案柜钥匙位于绿色箱子里，验证短语是银杏-47', scopeKind: 'workspace', scopeId: 'w', sourceRefs: [{ sessionId: 's', seq: 4 }], explicit: true })
-  assert.equal(stored.record.kind, 'context-chunk')
+  assert.equal(stored.record.kind, 'context-parent')
+  assert.equal(stored.record.childSpans.length, 1)
   assert.equal(stored.record.coreText, '蓝灯塔测试场景的档案柜钥匙位于绿色箱子里，验证短语是银杏-47')
   assert.deepEqual(stored.record.sourceRefs, [{ sessionId: 's', seq: 4 }])
   assert.equal(stored.record.vector.dimensions, 64)
@@ -97,7 +98,7 @@ test('async vector providers encode a bank chunk before it is persisted', async 
   })
   assert.equal(stored.record.vector.provider, 'http')
   assert.equal(stored.record.vector.model, 'small-local-test')
-  assert.equal(stored.record.vectorKey, `small-local-test:${stored.record.id}`)
+  assert.equal(stored.record.vectorKey, `small-local-test:${stored.record.id}:children`)
 })
 
 test('standalone key-value memory has no entity or canonical-fact projection', (t) => {

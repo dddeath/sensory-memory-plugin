@@ -1,8 +1,8 @@
 {
   "id": "sensory-memory",
-  "version": "0.8.0-chunk-vector",
+  "version": "0.9.0-parent-child-vector",
   "main": "./lib/index.js",
-  "description": "Chunk-only vector context offloading with session sensory and workspace projections",
+  "description": "Parent/Child vector context offloading with session sensory and multi-hop retrieval",
   "engines": {
     "dsh": ">=0.0.1"
   },

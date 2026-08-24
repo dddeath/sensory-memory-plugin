@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(process.argv[2] ?? process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.cwd(), '.dsh'))
-const store = join(root, 'sensory-index', 'chunk-memory-v1')
+const store = join(root, 'sensory-index', 'chunk-memory-v2')
 const snapshotPath = join(store, 'ledger.snapshot.json')
 const journalPath = join(store, 'ledger.journal.jsonl')
 
@@ -54,13 +54,16 @@ const countBy = (field) => rows.reduce((counts, row) => {
 }, {})
 
 console.log(JSON.stringify({
-  architecture: 'chunk-only-vector',
+  architecture: 'parent-child-vector-v2',
   root: root.replace(/\\/g, '/'),
   store: store.replace(/\\/g, '/'),
-  chunkCount: rows.length,
+  parentCount: rows.length,
+  childSpanCount: rows.reduce((sum, parent) => sum + (parent.childSpans?.length ?? 0), 0),
+  pendingParentCount: rows.filter((parent) => parent.state === 'pending-vector').length,
+  activeParentCount: rows.filter((parent) => parent.state === 'active').length,
   byLayer: countBy('layer'),
   bySession: countBy('sessionId'),
-  chunks: rows.map((chunk) => ({
+  parents: rows.map((chunk) => ({
     layer: chunk.layer,
     id: chunk.id,
     sessionId: chunk.sessionId ?? null,
@@ -71,11 +74,13 @@ console.log(JSON.stringify({
     label: chunk.label ?? null,
     temporalCurrent: chunk.temporalCurrent !== false,
     supersededBy: chunk.supersededBy ?? null,
-    vector: chunk.vector ? {
-      provider: chunk.vector.provider,
-      model: chunk.vector.model,
-      dimensions: chunk.vector.dimensions,
-    } : null,
+    state: chunk.state ?? null,
+    childSpanCount: chunk.childSpans?.length ?? 0,
+    supersededRangeCount: chunk.supersededRanges?.length ?? 0,
+    vectorSpec: chunk.vectorSpec ?? (chunk.vector ? {
+      provider: chunk.vector.provider, model: chunk.vector.model,
+      revision: chunk.vector.revision ?? null, dimensions: chunk.vector.dimensions,
+    } : null),
     preview: String(chunk.coreText ?? '').replace(/\s+/g, ' ').slice(0, 160),
   })),
 }, null, 2))

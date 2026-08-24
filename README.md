@@ -1,267 +1,338 @@
-# DSH Chunk-only Vector Memory
+# DSH Parent/Child 分层上下文记忆
 
-这是一个面向**有限上下文 Agent**的最小分层记忆原型。运行时只处理一种检索对象：
+这是一个面向**有限上下文长周期 Agent**的最小可审计原型。它不构建实体图，也不复制“每个实体一条观察”；唯一权威检索记录是 `ParentChunk`，嵌套的 `ChildSpan` 只负责细粒度向量定位。
 
-> Context Chunk（上下文块）
+当前版本：`0.9.0-parent-child-vector`。
 
-插件不创建实体、别名、关系、观察或事实图。一次卸载文本先按结构切成少量 chunk，每个 chunk 只保存一份权威正文和一个向量编码。
+## 1. 一句话理解
 
-## 1. 为什么改成 chunk-only
+```text
+完整 turn/document
+→ 少量 2K Parent（权威原文、来源和时态）
+→ 每个 Parent 内部生成多个 384-token Child（只用于 E5 检索）
+→ Child 命中聚合回 Parent
+→ 按多跳子问题覆盖选择最多 6 个 Parent
+→ 把完整 Parent current view 放入模型上下文
+```
 
-旧实现会先从一段文本抽取很多名字，再为每个名字复制同一段观察文本。一轮 sensory_store 因此可能生成几十条高度重复记录，候选上限很快被碎片占满。
+这样同时解决两个问题：
 
-现在的规则是：
+1. 扁平小 chunk 太多，候选上限被碎片占满；
+2. 只返回小 chunk 时，模型得到事实片段，却缺少解释该事实所需的上下文。
 
-- 短文本通常得到 1 个 chunk；
-- 长文本先按文档结构拆分，再按 token 预算合并或截断；
-- Markdown 表格以完整行作为边界，表头只加入向量上下文；
-- 代码优先按 class、function、method 拆分；
-- overlap 只进入 contextText，不会复制到权威 coreText；
-- 一个 chunk 对应一个向量和一个目录入口。
+## 2. 权威数据结构
 
-## 2. 一个 chunk 长什么样
+### ParentChunk
 
-~~~json
+```jsonc
 {
-  "id": "seg-s-1-1:chunk:001",
-  "kind": "context-chunk",
-  "sessionId": "s",
-  "workspaceId": "w",
-  "segmentId": "seg-s-1-1",
-  "sourceRefs": [{"sessionId": "s", "seq": 1}],
-  "format": "text",
-  "headingPath": [],
-  "coreText": "[seq 1] user: 项目M当前部署端口是8383。",
-  "contextText": "[seq 1] user: 项目M当前部署端口是8383。",
-  "tokenCount": 24,
-  "vector": {
-    "provider": "builtin",
-    "model": "feature-hash-cjk-v1",
-    "dimensions": 384,
-    "values": ["..."]
-  },
-  "evidenceQuality": 0.85,
-  "temporalCurrent": true,
-  "supersededBy": null
+  "id": "seg-s-1-2:parent:001",
+  "kind": "context-parent",
+  "schemaVersion": 2,
+  "scopeKind": "session",
+  "scopeId": "session-id",
+  "documentId": "session-id:turn:1",
+  "documentTitle": "项目运行记录",
+  "coreText": "不可变的 Parent 原文",
+  "sourceRefs": [{"sessionId": "session-id", "seq": 1}],
+  "state": "active",
+  "evidenceQuality": 0.9,
+  "childSpans": [],
+  "supersededRanges": [],
+  "temporalCurrent": true
 }
-~~~
+```
 
-- coreText：互不重叠的权威内容，用于展开、审计和来源核对。
-- contextText：送入向量编码器的文本，可以附带标题、表头和前后 overlap。
-- sourceRefs：指向 DSH 原始事件的 sessionId + seq。
-- vector：向量提供者、模型、维度和数值。
-- temporalCurrent：当前版本标志；明确更新语句可使同会话中的旧相似 chunk 退出当前检索。
+- Parent 是 Layer Ledger 中的 mutation 单位、来源核验单位、关联单位和模型披露单位。
+- Parent 不跨原始 document，也不跨 turn。
+- `coreText` 不因更新而改写；旧事实通过 `supersededRanges` 从 current view 中移除。
+- session sensory 只能被同一 session 检索。
 
-## 3. 每轮完整流程
+### ChildSpan
 
-~~~text
-DSH 原始 user / assistant / tool 事件
-        │
-        ▼
-MemorySegmenter：组成完整 turn segment，保护 tool-call/result 边界
-        │
-        ▼
-ContextChunker：结构拆分 → token 合并/截断 → 仅向量上下文 overlap
-        │
-        ▼
-VectorEncoder：每个 chunk 生成一个向量
-        │
-        ▼
-工作层保持原消息
-        │
-        ├─ 低活性 / 上下文压力 ─→ session sensoryChunks
-        ├─ 高价值 / 多次强关联 ─→ workspace 半持久完整投影
-        └─ 明确“记住”或长期价值 ─→ workspace / user-global bankChunks
+```jsonc
+{
+  "childId": "seg-s-1-2:parent:001:child:001",
+  "startOffset": 0,
+  "endOffset": 620,
+  "embeddingTextPreview": "标题 + heading path + Child core",
+  "vector": {
+    "provider": "http",
+    "model": "intfloat/multilingual-e5-small",
+    "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    "dimensions": 384
+  },
+  "temporalCurrent": true
+}
+```
 
-下一次 agent/pre-step：
-当前 user 查询 → query vector → session chunk 检索
-                         │ 无合格 chunk
-                         └─→ workspace / user-global bank chunk
-                         │ 仅在有可用候选且存在指代/歧义时
-                         └─→ 一次 memory-retrieval-plan
-                         ▼
-chunk 目录 + 半持久完整快照插入当轮真实 user 消息之前
-~~~
+- Child 没有独立 scope、sourceRefs、association、layer 或 Ledger collection。
+- overlap 只进入 Child 的 embedding text；Parent 原文不会重复。
+- 命中 Child 后返回其 Parent，不把 Child 直接放入 prompt。
 
-被动候选、向量命中和目录曝光都不增加关联。以下事件才是强关联：
+## 3. 默认切分参数
 
-- 用户或模型显式调用 sensory_open(chunk)；
-- 显式调用 memory_bank_open(record)；
-- 最终答案实际使用了已验证 chunk 中的内容。
+```yaml
+parentTargetTokens: 2048
+parentMaxTokens: 3072
+parentMinTokens: 512
+childTargetTokens: 384
+childMaxTokens: 512
+childOverlapTokens: 64
+```
 
-## 4. 切分规则
+边界优先级：turn → document → Markdown heading → 完整表格 → class/function → 自然段 → hard split。
 
-默认值：
+- Markdown 标题、表头和文档标题进入 Child embedding text。
+- 表格保持整行边界。
+- JavaScript/Python 代码优先按 class/function/method 拆分。
+- 超大单元才按 token 硬切。
 
-~~~yaml
-chunkTargetTokens: 320
-chunkMaxTokens: 448
-chunkOverlapTokens: 48
-~~~
+## 4. E5 sidecar
 
-### 4.1 普通文本
+向量模型固定为：
 
-1. 优先按段落、句号、分号和列表边界切分。
-2. 相邻小块合并到 chunkTargetTokens。
-3. 单块超过 chunkMaxTokens 时继续切。
-4. 相邻正文不重叠。
+```text
+model      intfloat/multilingual-e5-small
+revision   614241f622f53c4eeff9890bdc4f31cfecc418b3
+dimensions 384
+normalize  L2
+prefix     query: / passage:
+```
 
-### 4.2 Markdown
+源码位于：
 
-- 标题保存到 headingPath，并加入 contextText。
-- 同一标题下的相邻小段会合并。
-- fenced code 交给代码切分器。
-- 表格只在完整行边界切分。
-- 表头加入每个表格 chunk 的 contextText，不重复到 coreText。
+```text
+E:\deepseek_memory\sensory-memory-plugin\tools\embedding-sidecar\
+```
 
-### 4.3 代码
+模型 cache 位于：
 
-- JavaScript / TypeScript：优先按 class、function、方法和箭头函数。
-- Python：优先按 class、def、async def。
-- 超大函数才在函数内部继续按 token 上限切分。
+```text
+E:\deepseek_memory\.models\multilingual-e5-small\
+```
 
-## 5. 向量编码
+首次建立：
 
-### 5.1 默认零依赖原型
+```powershell
+cd E:\deepseek_memory\sensory-memory-plugin\tools\embedding-sidecar
+.\setup-once.ps1
+```
 
-~~~yaml
-vectorProvider: feature-hash
-vectorDimensions: 384
-~~~
+隐藏窗口启动和停止：
 
-feature-hash-cjk-v1 是可审计的本地特征向量，不是完整语义模型。这里的 hash 是向量槽位计算的一部分，不是 SHA 校验、交付清单或运行环境防御。
+```powershell
+.\run-hidden.ps1
+.\stop.ps1
+```
 
-### 5.2 本地小型模型
+健康检查：
 
-生产试验可切换本地 HTTP sidecar，例如 [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)：
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/health
+```
 
-~~~yaml
-vectorProvider: http
-vectorEndpoint: http://127.0.0.1:3901/embed
-vectorModel: BAAI/bge-small-zh-v1.5
-vectorTimeoutMs: 5000
-~~~
+正式 Benchmark 设置 `vectorRequired=true`：模型、revision、维度或服务状态不符时，环境门失败，不产正式分数。普通 DSH 设置 `vectorRequired=false`：sidecar 短暂失活时显式进入 `lexical-only`，不会拿 feature hash 冒充 E5；服务恢复后 maintenance 可以补齐 Child vectors。
 
-插件只使用 Node 内置 http。sidecar 合同为：
+插件 Node 运行依赖数量仍为 0。Python sidecar 使用独立 `.venv`，不把模型文件提交到 Git。
 
-~~~http
-POST /embed
-Content-Type: application/json
+## 5. Matcher v2
 
-{"model":"BAAI/bge-small-zh-v1.5","texts":["第一段","第二段"]}
-~~~
+### 5.1 查询分解
 
-~~~json
-{"vectors":[[0.1,0.2],[0.3,0.4]]}
-~~~
+```text
+S0 = 完整查询
+S1-S3 = 最多三个确定性高信息子句
+```
 
-## 6. 召回规则
+单独重复 S0、停用词片段和低信息短句会被拒绝。分解不调用 LLM。
 
-候选来源是词法匹配与向量近邻的并集：
+### 5.2 宽召回
 
-~~~yaml
-candidateLimit: 32
-vectorCandidateThreshold: 0.18
-relevanceThreshold: 0.70
-evidenceQualityThreshold: 0.80
-evidenceCatalogLimit: 3
-ambiguityMargin: 0.15
-plannerCandidateFloor: 0.45
-~~~
+每个 S0-S3：
 
-自动进入目录必须同时满足：
+1. E5 query embedding；
+2. 检索 active/current Child；
+3. 每路保留 top-8；
+4. 接纳 `top1 - 0.12` 相对窗口、精确词法锚点和 source-valid top-1 recall guard；
+5. 合并最多 32 个 Child。
 
-1. effectiveRelevance 不低于 0.70；
-2. evidenceQuality 不低于 0.80；
-3. sourceRefs 可以回读到同一 session 的原始事件；
-4. chunk 不是旧版本、冲突版本或 tombstone；
-5. 第一名与独立来源第二名有足够分差，或只有一个合格 chunk。
+召回阶段故意较宽。只有低置信 recall guard 的 Parent 不自动进入证据，但仍可作为 planner 的诊断候选。
 
-effectiveRelevance 取词法分和向量余弦相似度的较大值。向量只负责找候选，不替代来源、质量、时态和冲突判断。
+### 5.3 Parent 聚合和多跳覆盖
 
-普通任务不会因为存在一个弱向量候选就调用辅助 LLM。memory-retrieval-plan 只在以下条件同时成立时调用：
+Child 按 `parentId` 聚合，应用硬门：
 
-- 已有可读候选；
-- 快路径不足；
-- 存在指代、时间歧义、冲突或真实低分差；
-- 同一 user turn 尚未调用过 planner。
+- 当前 session 可见；
+- `sourceRefs` 可回读；
+- `evidenceQuality >= 0.80`；
+- 无未解决冲突；
+- Parent/Child 当前有效；
+- Parent 不处于 `pending-vector`。
 
-planner 最多接收前 8 个紧凑 chunk 摘要，使用 reasoningEffort=off，且只能选择给定 chunk ID。
+最多保留 16 个 eligible Parent，再按以下价值贪心选择最多 6 个：
 
-## 7. DSH 工具
+```text
+新增子问题覆盖
++ dense relevance
++ 精确词法锚点
++ 新 source turn/document
+- Parent 语义冗余
+```
 
-| 工具 | 用途 |
+原来的 `max(lexical, vector) >= 0.70` 不再承担 v2 的最终资格语义。它会把大量相似候选一并放行，也会在跨表达时误杀可靠证据。
+
+### 5.4 Planner 触发
+
+普通长问题中的 `given that`、`what does this enable` 或普通 `when` 不再被当成独立指代/时态歧义。`memory-retrieval-plan` 只在以下情况出现：
+
+- 明确的“上次那个 / that one / the previous one”；
+- 子问题仍未覆盖；
+- 真实时间版本歧义或冲突；
+- 已有可验证诊断候选，而不是任意弱向量近邻。
+
+同一 step 最多一次。LLM 只能选择给出的 Parent ID；最终证据仍由确定性重查和来源核验决定。
+
+## 6. Temporal supersession
+
+明确更新语句会比较新旧 Child：
+
+```text
+新 Child 与旧 active Child 有可靠词法锚点和相似度
+→ 旧 Child temporalCurrent=false
+→ 旧 Parent 增加 supersededRanges
+→ 新 Child 记录 supersedes
+→ renderCurrentParentView 删除旧 range，保留 Parent 其余内容
+```
+
+只有所有 Child 都失效时，整个 Parent 才退出当前检索。DSH 原始事件和 Parent `coreText` 始终保留，便于审计。
+
+## 7. 分层和 DSH 生命周期
+
+```text
+turn-stopping
+  收集完整 user/assistant/tool transaction
+  → 写 Parent pending-vector
+  → 批量编码全部 Child
+  → 一条 Parent mutation 激活
+
+agent/pre-step
+  等待 pending（最多 transitionWaitMs）
+  → surface/ledger 对账
+  → 工作→感知/半持久迁移
+  → Child 检索 + Parent coverage
+  → 半持久快照 + Parent current views
+  → 插入真实 user 之前
+
+llm/stream
+  只读记录最终 provider request 与 usage
+```
+
+层级保持：
+
+| 层 | 作用域 | 内容 |
+|---|---|---|
+| 工作层 | session | 原始可见消息 |
+| 感知层 | session | Parent + 嵌套 Child 视图 |
+| 半持久层 | workspace，按 session 投影 | 完整 Parent/segment 投影 |
+| bank | workspace 或 user-global | 持久 Parent |
+
+被动 candidate、目录曝光和 `sensory_recall` 不增加关联；`sensory_open`、bank open 和最终答案的可验证使用才增加关联。
+
+## 8. 上下文预算
+
+插件默认 Parent evidence 上限为可用输入的 45%。Benchmark 使用：
+
+```text
+A8 / C8
+A16 / C16
+A32 / C32
+BFull
+```
+
+- A：全部预算用于当前仍可见文档；
+- C：当前文档最低 55%，Parent evidence 最高 45%；未用余额可以互借；
+- cap 约束完整 answer provider input，而不是只约束 notes；
+- Parent 太大放不下时跳过，绝不重新切成碎片注入。
+
+## 9. DSH 工具
+
+| 工具 | 作用 |
 |---|---|
-| sensory_store({text}) | 按结构写入当前 session 的 chunk；短文本通常只写一条。 |
-| sensory_recall({query,limit}) | 只读返回候选 chunk 和词法/向量分数。 |
-| sensory_open({chunk}) | 展开 coreText、contextText、sourceRefs，并记一次强关联。 |
-| sensory_demote({sourceSeq}) | 把包含该 seq 的完整工作 segment 卸载为 chunk。 |
-| sensory_status() | 查看层级数量、matcher、chunker、vector encoder 和迁移统计。 |
-| sensory_cache_status() | 兼容名称；实际返回半持久 chunk 投影，不是旧排序 cache。 |
-| memory_layer_status() | 查看工作、感知 chunk、半持久投影和 bank chunk。 |
-| memory_bank_open({record}) | 展开 bank chunk，并记一次强关联。 |
-| memory_forget({target,scope}) | tombstone chunk；DSH 原始事件仍保留。 |
+| `sensory_store({text})` | 写入当前 session 的 Parent 和 Child vectors。 |
+| `sensory_recall({query,limit})` | 只读显示 Parent 候选、Child hits 和 coverage。 |
+| `sensory_open({chunk})` | 展开 Parent current/raw view 与 sourceRefs，并记录强关联。 |
+| `sensory_demote({sourceSeq})` | 把包含该 seq 的完整工作 segment 卸载。 |
+| `sensory_status()` | 查看 Parent/Child、matcher、向量和迁移状态。 |
+| `sensory_cache_status()` | 兼容名称；实际查看半持久 Parent 投影。 |
+| `memory_layer_status()` | 查看工作、感知、半持久和 bank。 |
+| `memory_bank_open({record})` | 展开 bank Parent。 |
+| `memory_forget({target,scope})` | tombstone 检索视图，保留 DSH raw events。 |
 
-调试入口：
+调试工具：
 
-| 工具 | 内容 |
+| 工具 | 主要输出 |
 |---|---|
-| sensory_debug_last_prompt | 完整 system + tools + messages。 |
-| sensory_debug_index_prompt | 当前目录中的 chunk、向量、分数、来源和 ledger 状态。 |
-| sensory_debug_cache_prompt | 半持久 chunk 快照与投影状态。 |
-| sensory_debug_working_prompt | 工作层消息、source、block 和 tool 配对。 |
-| sensory_clear_workspace_index | 兼容名称；只清当前 session 的 sensoryChunks。 |
+| `sensory_debug_last_prompt` | 完整 system、tools、messages 和请求属性。 |
+| `sensory_debug_index_prompt` | Parent current view、Child offsets、向量元数据、admission、coverage、source 和 ledger。 |
+| `sensory_debug_cache_prompt` | 半持久 Parent 快照与投影。 |
+| `sensory_debug_working_prompt` | 工作消息、source、block、tool-call/result 配对和迁移。 |
 
-大输出建议使用：
+大输出请使用 `output=document`，避免在对话里回显几十万字符。
 
-~~~text
-请调用 sensory_debug_index_prompt，output=document。
-~~~
+## 10. 人类可执行入口
 
-## 8. 人类可执行入口
+### 插件测试
 
-完整验证：
-
-~~~powershell
+```powershell
 cd E:\deepseek_memory\sensory-memory-plugin
-npm test
-npm run verify -- --out E:\deepseek_memory\results\chunk-memory-verification.json
-~~~
+npm.cmd test
+```
 
-查看实际 chunk：
+### E5 端到端冒烟
 
-~~~powershell
-cd E:\deepseek_memory\sensory-memory-plugin
-npm run inspect:chunks
-~~~
+```powershell
+cd E:\deepseek_memory
+node benchmark\memgym\scripts\smoke-parent-child-e5.mjs `
+  results\important-tests\parent-child-vector-matcher-v2-20260825-01\evidence\sidecar\standalone-e5-smoke.json
+```
 
-指定独立 DSH_HOME：
+### 不调用模型的机制门
 
-~~~powershell
-npm run inspect:chunks -- E:\deepseek_memory\.benchmark-dsh\c
-~~~
+```powershell
+cd E:\deepseek_memory\benchmark\memgym
+.\.venv\Scripts\python.exe scripts\run-offline-parent-child-gate.py `
+  E:\deepseek_memory\results\important-tests\memgym-dr-formal-deepseek-official-20260824-01\data\pilot-12.jsonl `
+  E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-20260825-01\evidence\offline-gate `
+  --run-id parent-child-vector-matcher-v2-20260825-01-offline `
+  --old-results E:\deepseek_memory\results\important-tests\memgym-dr-formal-deepseek-official-20260824-01
+```
 
-输出包含 session 分组数量、chunk ID、sourceRefs、格式、token 数、向量 provider/model/dimensions 和权威正文预览。
+数量门使用“相对旧 flat chunk 降幅至少 50%”和 `parentsPerEvictedDocument <= 1.25`。冻结题集平均有 252.33 个被卸载原始文档，因此旧的绝对 `average Parent <=150` 与“Parent 不跨 document”不可同时满足；旧门只保留为不可行诊断。
 
-### Headless 兼容
+### 正式上下文矩阵
 
-Web profile 提供 `workspaceRegistry` 时，插件使用其稳定 workspace ID。纯 headless profile 没有该服务时，插件使用规范化 cwd 作为 workspace ID；session 感知层仍按 sessionId 隔离。这个 fallback 是运行时已有路径，入口不会再把可选服务误声明为启动硬依赖。
+正式命令和冻结配置见：
 
-## 9. 主要模块
+```text
+E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-20260825-01\
+```
 
-| 模块 | 单一职责 |
+开发、离线门和 Benchmark 不向正常 3080 写实验对话。
+
+## 11. 主要模块
+
+| 文件 | 单一职责 |
 |---|---|
-| lib/context-chunker.js | 普通文本、Markdown、表格和代码的结构切分与相邻小块合并。 |
-| lib/vector-encoder.js | 内置特征向量和本地 HTTP 小模型适配器。 |
-| lib/layered-memory-records.js | 从完整 turn segment 生成 chunk 记录。 |
-| lib/layered-match-support.js | chunk 候选、词法/向量评分和来源核验。 |
-| lib/layered-match-engine.js | session 到 bank 的检索、门控和目录渲染。 |
-| lib/layered-memory-runtime.js | DSH pre-step / turn-stopping、迁移、投影和时态替代。 |
-| lib/memory-ledger.js | append-only chunk 状态真源。 |
-| lib/memory-surface-projector.js | 工作消息替换和当轮 plugin user 快照。 |
-| lib/semipersistent-layer.js | workspace 完整 chunk 投影。 |
-| lib/memory-bank.js | workspace / user-global bank chunk。 |
-| lib/sensory-tools.js | DSH 显式工具入口。 |
-| lib/sensory-debug.js | 人类可读、可落盘的 prompt 与 chunk 审计。 |
+| `lib/context-chunker.js` | Parent 边界和 Child spans。 |
+| `lib/vector-encoder.js` | E5 HTTP 合同、批处理和显式 lexical-only。 |
+| `lib/layered-memory-records.js` | pending/active Parent 构造。 |
+| `lib/layered-match-support.js` | query decomposition、Child 词法/向量特征、source/current view。 |
+| `lib/layered-match-engine.js` | Child recall、Parent 聚合、coverage 和渲染。 |
+| `lib/layered-memory-runtime.js` | DSH hook、迁移、局部 supersession 和 vector repair。 |
+| `lib/memory-ledger.js` | append-only 状态真源。 |
+| `lib/sensory-debug.js` | 不输出完整向量数组的人类可读审计。 |
+| `lib/standalone-chunk-memory.js` | Benchmark 直接复用生产实现。 |
+| `tools/embedding-sidecar/` | 固定 E5 模型的本地服务。 |
 
-插件运行时 npm 第三方依赖数量为 0，不修改 DSH 核心、Bridge、Benchmark runner 或 engram 源码。
+不修改 DSH 核心和 engram；插件 Node 第三方运行依赖为 0。

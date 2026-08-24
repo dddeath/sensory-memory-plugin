@@ -7,18 +7,29 @@
         journalCompactAfter: 2000
         trustedEvidenceTools: []
         userGlobalEnabled: true
-        candidateLimit: 32
-        evidenceCatalogLimit: 3
-        relevanceThreshold: 0.70
+        childTopK: 8
+        childUnionLimit: 32
+        parentEligibleLimit: 16
+        parentSelectLimit: 6
+        relativeScoreWindow: 0.12
         evidenceQualityThreshold: 0.80
         ambiguityMargin: 0.15
-        vectorProvider: feature-hash
+        vectorProvider: http
+        vectorEndpoint: http://127.0.0.1:8765/embed
+        vectorModel: intfloat/multilingual-e5-small
+        vectorRevision: 614241f622f53c4eeff9890bdc4f31cfecc418b3
         vectorDimensions: 384
+        vectorBatchSize: 32
+        vectorTimeoutMs: 15000
+        vectorRequired: false
         vectorCandidateThreshold: 0.18
-        plannerCandidateFloor: 0.45
-        chunkTargetTokens: 320
-        chunkMaxTokens: 448
-        chunkOverlapTokens: 48
+        vectorLowConfidenceFloor: 0.50
+        parentTargetTokens: 2048
+        parentMaxTokens: 3072
+        parentMinTokens: 512
+        childTargetTokens: 384
+        childMaxTokens: 512
+        childOverlapTokens: 64
         workingInactiveTurns: 4
         semiAssociationTurns: 8
         semiAssociationCount: 2
@@ -30,6 +41,7 @@
         contextPressureRatio: 0.65
         contextPressureTargetRatio: 0.55
         semipersistentBudgetRatio: 0.20
+        parentEvidenceBudgetRatio: 0.45
         transitionWaitMs: 5000
         llmProvider: opencode-go
         llmModel: deepseek-v4-flash
