@@ -23,6 +23,7 @@
     "./context-utils": "./lib/context-utils.js",
     "./vector-encoder": "./lib/vector-encoder.js",
     "./layered-memory-runtime": "./lib/layered-memory-runtime.js",
+    "./standalone-chunk-memory": "./lib/standalone-chunk-memory.js",
     "./atomic-files": "./lib/atomic-files.js"
   },
   "files": [
