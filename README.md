@@ -258,7 +258,7 @@ automaticRetrievalBelowPressure: false
 ```
 
 - “连续4轮未关联”只参与达到压力后的压缩排序，不再单独触发卸载。
-- `effectiveInputCapTokens` 未设置时，沿用 routed context window 减输出预留；隔离 Benchmark 可用环境变量 `DSH_MEMORY_EFFECTIVE_INPUT_CAP_TOKENS` 把 A/C 放到同一压力轴。
+- `effectiveInputCapTokens` 未设置时，沿用 routed context window 减输出预留；隔离 Benchmark 可用环境变量 `DSH_MEMORY_EFFECTIVE_INPUT_CAP_TOKENS` 把 A/C 放到同一压力轴。显式值是权威实验 cap，可覆盖 provider 注册表中过时的 context metadata；设置前必须用真实 warmup usage 完成一次压力校准。
 - 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，不能重新把输入推满。
 - Parent 太大放不下时跳过，绝不重新切成碎片注入。
 - `DSH_MEMORY_VECTOR_REQUIRED=true` 让正式 Benchmark 在 E5 失败时终止该题；普通环境仍可显式降级并报告。
@@ -343,6 +343,14 @@ C-layered = 相同DSH原生压缩 + 本插件压力算法
 ```
 
 横轴固定为处理前压力 `50/63/68/78/82/92%`，同时记录 sensory 与 DSH 原生压缩事件、Provider 最终压力、任务成功率和 usage。
+
+256K 必须优先使用 `benchmark\context-pressure\scripts\run-memory-bounded.ps1`：每题单独启动现有隔离 DSH profile，结果落盘后立即停止进程；题前可用物理内存低于 8 GB 时停止。这样不会让多个 256K session 的 surface、trace 和向量状态同时驻留内存。
+
+当前压力实验结果：32K held-out 首次尝试 A=11/12、C=12/12；256K 单任务六点复验 A=C=6/6；两种规模下 C 对 A 已触发原生 summary 的成对避免率均为 1.0。完整边界见：
+
+```text
+E:\deepseek_memory\results\important-tests\context-pressure-agent-v1-20260825-01\03-final-report.md
+```
 
 ## 11. 主要模块
 
