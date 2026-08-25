@@ -54,6 +54,23 @@ test('empty candidates stay zero-injection and do not call the planner', async (
   assert.equal(planner.status().llmCalls, 0)
 })
 
+test('HTTP vector failure is reported as lexical-fallback instead of silent hybrid retrieval', async (t) => {
+  const vectorEncoder = {
+    provider: 'http',
+    encodeSync() { return null },
+    async encodeBatch(texts) { return texts.map(() => null) },
+    status() { return { provider: 'http', vectorAvailable: false, failures: 1, lastError: 'sidecar unavailable' } },
+  }
+  const { ledger, matcher } = runtimeFixture(t, { vectorEncoder })
+  put(ledger, chunk(vectorEncoder, { id: 'lexical-fallback', text: '项目M当前部署端口是8282。' }))
+  const result = await matcher.retrieveAsync('项目M当前部署端口8282', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(result.retrievalMode, 'lexical-fallback')
+  assert.equal(result.vectorAvailable, false)
+  assert.equal(result.degraded, true)
+  assert.equal(result.degradationReason, 'sidecar unavailable')
+  assert.equal(matcher.status().lexicalFallbackQueries, 1)
+})
+
 test('an ordinary weak vector candidate does not trigger a retrieval-plan call', async (t) => {
   const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
   put(ledger, chunk(vectorEncoder, { id: 'old-terminal', text: '终端历史记录包含 package 配置。' }))

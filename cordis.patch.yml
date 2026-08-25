@@ -4,6 +4,8 @@
       config:
         indexDir: !!js dshHomePath('sensory-index')
         indexScope: session
+        compressionMode: pressure
+        automaticRetrievalBelowPressure: false
         journalCompactAfter: 2000
         trustedEvidenceTools: []
         userGlobalEnabled: true

@@ -22,11 +22,13 @@ test('remember parser accepts affirmative imperatives and rejects negation, exam
   assert.equal(parseRememberDirective('例如用户说“记住端口”'), null)
 })
 
-test('4/8/12-turn and evidence gates implement the locked migration defaults', () => {
+test('pressure triggers working offload while four inactive turns only rank compression candidates', () => {
   const policy = new MemoryPolicy()
   const base = { id: 'seg', sealedAt: 1, turn: 1, openTask: false, pinned: false, associations: [], verifiedSource: true, evidenceQuality: 0.9, durability: 0.9, importance: 0.5 }
   assert.equal(policy.shouldMoveWorkingToSensory(base, { currentTurn: 4 }), false)
-  assert.equal(policy.shouldMoveWorkingToSensory(base, { currentTurn: 5 }), true)
+  assert.equal(policy.shouldMoveWorkingToSensory(base, { currentTurn: 5 }), false)
+  assert.equal(policy.compressionPriority(base, { currentTurn: 5 }).cold, true)
+  assert.equal(policy.shouldMoveWorkingToSensory(base, { currentTurn: 5, contextPressure: true }), true)
   const used = addAssociation(addAssociation(base, { turn: 2, sessionId: 's', weight: 1 }), { turn: 7, sessionId: 's', weight: 1 })
   assert.equal(policy.shouldPromoteToSemi(used, { currentTurn: 8 }), true)
   assert.equal(policy.shouldPromoteToSemi({ ...used, evidenceQuality: 0.7 }, { currentTurn: 8 }), false)

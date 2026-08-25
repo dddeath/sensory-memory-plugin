@@ -2,17 +2,17 @@
 
 这是一个面向**有限上下文长周期 Agent**的最小可审计原型。它不构建实体图，也不复制“每个实体一条观察”；唯一权威检索记录是 `ParentChunk`，嵌套的 `ChildSpan` 只负责细粒度向量定位。
 
-当前版本：`0.10.0-parent-child-rerank`。
+当前版本：`0.11.0-pressure-driven`。
 
 ## 1. 一句话理解
 
 ```text
-完整 turn/document
-→ 少量 2K Parent（权威原文、来源和时态）
-→ 每个 Parent 内部生成多个 384-token Child（只用于 E5 检索）
-→ Child 命中聚合回 Parent
-→ 按多跳子问题覆盖选择最多 6 个 Parent
-→ 把完整 Parent current view 放入模型上下文
+完整 turn/document 保留在工作上下文
+→ 阈值前只预计算 Parent/Child，不改写 prompt
+→ 上下文达到65%后，才把冷 Parent 无损卸载到 session 索引
+→ 压缩目标55%，DSH原生80% compaction继续作为兜底
+→ 后续查询只检索已经卸载的 Child
+→ Child 命中聚合回 Parent，按需把完整 Parent current view 放回上下文
 ```
 
 这样同时解决两个问题：
@@ -132,7 +132,7 @@ cd E:\deepseek_memory\sensory-memory-plugin\tools\embedding-sidecar
 Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
-正式 Benchmark 设置 `vectorRequired=true`：模型、revision、维度或服务状态不符时，环境门失败，不产正式分数。普通 DSH 设置 `vectorRequired=false`：sidecar 短暂失活时显式进入 `lexical-only`，不会拿 feature hash 冒充 E5；服务恢复后 maintenance 可以补齐 Child vectors。
+正式 Benchmark 设置 `vectorRequired=true`：模型、revision、维度或服务状态不符时，环境门失败，不产正式分数。普通 DSH 设置 `vectorRequired=false`：主动配置无向量时是 `lexical-only`；HTTP sidecar 失败后继续工作的请求明确标记为 `lexical-fallback`、`degraded=true` 和具体错误，不再伪装成 hybrid。服务恢复后 maintenance 可以补齐 Child vectors。
 
 插件 Node 运行依赖数量仍为 0。Python sidecar 使用独立 `.venv`，不把模型文件提交到 Git。
 
@@ -221,13 +221,15 @@ turn-stopping
   → 批量编码全部 Child
   → 一条 Parent mutation 激活
 
-agent/pre-step
+agent/pre-step（prepend）
   等待 pending（最多 transitionWaitMs）
-  → surface/ledger 对账
-  → 工作→感知/半持久迁移
-  → Child 检索 + Parent coverage
-  → 半持久快照 + Parent current views
-  → 插入真实 user 之前
+  → 使用 DSH token meter 计算处理前压力
+  → 低于65%且没有已卸载历史：原样进入，不检索、不调用 planner
+  → 达到65%：按冷却时长、体积和原始顺序选择完整 segment
+  → 无损卸载，直到约55%
+  → 只检索已卸载 Parent
+  → 证据受最终65%输入上限约束并插在真实 user 之前
+  → DSH原生80% compaction保持启用
 
 llm/stream
   只读记录最终 provider request 与 usage
@@ -244,21 +246,23 @@ llm/stream
 
 被动 candidate、目录曝光和 `sensory_recall` 不增加关联；`sensory_open`、bank open 和最终答案的可验证使用才增加关联。
 
-## 8. 上下文预算
+## 8. 压力与上下文预算
 
-插件默认 Parent evidence 上限为可用输入的 45%。Benchmark 使用：
+默认策略：
 
-```text
-A8 / C8
-A16 / C16
-A32 / C32
-BFull
+```yaml
+compressionMode: pressure
+contextPressureRatio: 0.65
+contextPressureTargetRatio: 0.55
+automaticRetrievalBelowPressure: false
 ```
 
-- A：全部预算用于当前仍可见文档；
-- C：当前文档最低 55%，Parent evidence 最高 45%；未用余额可以互借；
-- cap 约束完整 answer provider input，而不是只约束 notes；
+- “连续4轮未关联”只参与达到压力后的压缩排序，不再单独触发卸载。
+- `effectiveInputCapTokens` 未设置时，沿用 routed context window 减输出预留；隔离 Benchmark 可用环境变量 `DSH_MEMORY_EFFECTIVE_INPUT_CAP_TOKENS` 把 A/C 放到同一压力轴。
+- 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，不能重新把输入推满。
 - Parent 太大放不下时跳过，绝不重新切成碎片注入。
+- `DSH_MEMORY_VECTOR_REQUIRED=true` 让正式 Benchmark 在 E5 失败时终止该题；普通环境仍可显式降级并报告。
+- 插件 listener 使用 prepend，使65%无损卸载有机会先于 DSH 默认80%原生摘要执行；原生 compaction仍保留为相同安全兜底。
 
 ## 9. DSH 工具
 
@@ -324,6 +328,21 @@ E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-202608
 ```
 
 开发、离线门和 Benchmark 不向正常 3080 写实验对话。
+
+### 压力—任务成功率曲线
+
+```text
+E:\deepseek_memory\benchmark\context-pressure\README.md
+```
+
+正式 A/C：
+
+```text
+A-native = DSH原生压缩
+C-layered = 相同DSH原生压缩 + 本插件压力算法
+```
+
+横轴固定为处理前压力 `50/63/68/78/82/92%`，同时记录 sensory 与 DSH 原生压缩事件、Provider 最终压力、任务成功率和 usage。
 
 ## 11. 主要模块
 

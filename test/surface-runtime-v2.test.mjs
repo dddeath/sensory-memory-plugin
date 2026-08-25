@@ -26,8 +26,21 @@ test('headless activation keeps workspaceRegistry optional and falls back to nor
   assert.match(resolved.workspaceId, /bench/i)
 })
 
-test('four inactive turns replace a complete historical segment with a session sensory checkpoint', async (t) => {
+test('four inactive turns stay verbatim below context pressure', async (t) => {
   const { runtime, ledger } = fixture(t)
+  const s = session()
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.ledger.drain('session:s', 1000)
+  const current = { id: 'u5', role: 'user', content: [{ type: 'text', text: '完全无关的问题' }], source: { kind: 'user' } }
+  await runtime.preStep({ agent, messages: [current], turn: 5, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  assert.equal(s.replacements.length, 0)
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length, 0)
+  assert.equal(runtime.status('s', 'w').stats.preThresholdBypasses, 1)
+})
+
+test('context pressure replaces the cold complete segment with a session sensory checkpoint', async (t) => {
+  const { runtime, ledger } = runtimeFixture(t, { effectiveInputCapTokens: 8 })
   const s = session()
   const agent = { cwd: 'E:/bench', session: s }
   await runtime.turnStopping({ agent, turn: 1 })
@@ -61,6 +74,24 @@ test('surface replacement publishes an exact token-meter shadow price immediatel
   assert.equal(replacement.type, 'user/message')
   assert.deepEqual(replacement.surfaceOp, { op: 'replace', start: 1, end: 2 })
   assert.deepEqual(replacement.sourceEventSeqs, [1, 2])
+})
+
+test('effective input cap uses the DSH token meter on the same pressure axis as native compaction', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-pressure-axis-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = new MemoryLedger(join(dir, 'ledger'))
+  const tokenMeter = {
+    measure() { return { totalTokens: 68, surfaceTokens: 60, baseline: { kind: 'estimated', tokens: 68 }, logRevision: 9 } },
+  }
+  const surface = new MemorySurfaceProjector({ ledger, tokenMeter, config: { effectiveInputCapTokens: 100, contextPressureRatio: 0.65, contextPressureTargetRatio: 0.55 } })
+  const budget = surface.budget({ sessionId: 's', session: {}, contextWindow: 1000, maxOutputTokens: 200, request: { messages: [] } })
+  assert.equal(budget.usableInputTokens, 100)
+  assert.equal(budget.estimatedInputTokens, 68)
+  assert.equal(budget.pressure, 0.68)
+  assert.equal(budget.pressureTriggered, true)
+  assert.equal(budget.pressureThresholdTokens, 65)
+  assert.equal(budget.pressureTargetTokens, 55)
+  assert.equal(budget.pressureSource, 'dsh-token-meter:estimated')
 })
 
 test('a visible DSH compact checkpoint migrates shadowed working segments to sensory and restores a root manifest', async (t) => {
@@ -127,12 +158,31 @@ test('semipersistent snapshot and sensory catalog are plugin user messages immed
   const agent = { cwd: 'E:/bench', session: s }
   const seg = { id: 'semi1', segmentId: 'semi1', sessionId: 's', workspaceId: 'w', label: '项目S上下文', turn: 1, sourceSeqs: [1], records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目S端口是6060', blockKinds: ['text'] }], contextChunks: [], evidenceQuality: 0.9, durability: 0.9, importance: 0.9, verifiedSource: true, associations: [], state: 'semipersistent' }
   semi.promote(seg, { workspaceId: 'w', sessionId: 's', workspaceTurn: 1 })
-  ledger.upsert('sourceSegments', { id: 'sensory-source', sessionId: 's', records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目M端口8282' }] }, { scopeKind: 'session', scopeId: 's', id: 'sensory-source' })
+  ledger.upsert('sourceSegments', {
+    id: 'sensory-source', sessionId: 's', state: 'sensory',
+    replacementLineage: [{ transition: 'context-pressure' }],
+    records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目M端口8282' }],
+  }, { scopeKind: 'session', scopeId: 's', id: 'sensory-source' })
   ledger.upsert('sensoryChunks', { id: 'chunk-m', kind: 'context-chunk', label: '项目M上下文', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', segmentId: 'sensory-source', coreText: '项目M端口8282', contextText: '项目M端口8282', vector: vectorEncoder.encodeSync('项目M端口8282'), sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true }, { scopeKind: 'session', scopeId: 's', id: 'chunk-m' })
   const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '项目M端口是多少' }], source: { kind: 'user' } }
   const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
-  assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['semipersistent-snapshot', 'sensory-catalog', 'real-user'])
-  assert.equal(decision.messages.slice(0, 2).every((message) => message.role === 'user' && message.source.kind === 'plugin'), true)
+  assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['sensory-root-manifest', 'semipersistent-snapshot', 'sensory-catalog', 'real-user'])
+  assert.equal(decision.messages.slice(0, 3).every((message) => message.role === 'user' && message.source.kind === 'plugin'), true)
+})
+
+test('manual sensory storage alone does not cause automatic low-pressure retrieval', async (t) => {
+  const { runtime, ledger, vectorEncoder } = fixture(t)
+  const s = session()
+  const agent = { cwd: 'E:/bench', session: s }
+  ledger.upsert('sourceSegments', {
+    id: 'manual-source', sessionId: 's', state: 'sensory', replacementLineage: [],
+    records: [{ seq: 1, role: 'user', sourceKind: 'user', text: '项目M端口8282' }],
+  }, { scopeKind: 'session', scopeId: 's', id: 'manual-source' })
+  ledger.upsert('sensoryChunks', { id: 'manual-chunk', kind: 'context-chunk', label: '项目M上下文', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', segmentId: 'manual-source', coreText: '项目M端口8282', contextText: '项目M端口8282', vector: vectorEncoder.encodeSync('项目M端口8282'), sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true }, { scopeKind: 'session', scopeId: 's', id: 'manual-chunk' })
+  const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '项目M端口是多少' }], source: { kind: 'user' } }
+  const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  assert.deepEqual(decision.messages, [current])
+  assert.equal(runtime.status('s', 'w').lastPreStep.retrievalSkipped, 'below-pressure-no-offloaded-context')
 })
 
 test('unchanged semipersistent snapshots are reused and changed snapshots supersede the old surface event', (t) => {
