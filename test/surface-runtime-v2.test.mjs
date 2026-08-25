@@ -92,6 +92,22 @@ test('effective input cap uses the DSH token meter on the same pressure axis as 
   assert.equal(budget.pressureThresholdTokens, 65)
   assert.equal(budget.pressureTargetTokens, 55)
   assert.equal(budget.pressureSource, 'dsh-token-meter:estimated')
+  assert.equal(budget.effectiveInputCapSource, 'explicit-config')
+})
+
+test('explicit effective cap overrides stale provider context metadata', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-explicit-cap-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = new MemoryLedger(join(dir, 'ledger'))
+  const tokenMeter = { measure: () => ({ totalTokens: 131_072, surfaceTokens: 100_000, baseline: { kind: 'usage' }, logRevision: 3 }) }
+  const surface = new MemorySurfaceProjector({ ledger, tokenMeter, config: { effectiveInputCapTokens: 262_144, contextPressureRatio: 0.65 } })
+  const budget = surface.budget({ sessionId: 's', session: {}, contextWindow: 128_000, maxOutputTokens: 8_192 })
+  assert.equal(budget.contextWindow, 128_000)
+  assert.equal(budget.routedUsableInputTokens, 119_808)
+  assert.equal(budget.usableInputTokens, 262_144)
+  assert.equal(budget.pressure, 0.5)
+  assert.equal(budget.pressureTriggered, false)
+  assert.equal(budget.effectiveInputCapSource, 'explicit-config')
 })
 
 test('a visible DSH compact checkpoint migrates shadowed working segments to sensory and restores a root manifest', async (t) => {
