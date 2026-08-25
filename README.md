@@ -2,7 +2,7 @@
 
 这是一个面向**有限上下文长周期 Agent**的最小可审计原型。它不构建实体图，也不复制“每个实体一条观察”；唯一权威检索记录是 `ParentChunk`，嵌套的 `ChildSpan` 只负责细粒度向量定位。
 
-当前版本：`0.9.0-parent-child-vector`。
+当前版本：`0.10.0-parent-child-rerank`。
 
 ## 1. 一句话理解
 
@@ -154,8 +154,9 @@ S1-S3 = 最多三个确定性高信息子句
 1. E5 query embedding；
 2. 检索 active/current Child；
 3. 每路保留 top-8；
-4. 接纳 `top1 - 0.12` 相对窗口、精确词法锚点和 source-valid top-1 recall guard；
-5. 合并最多 32 个 Child。
+4. 接纳 `top1 - 0.20` 相对窗口、精确词法锚点和 source-valid top-1 recall guard；
+5. 每个子查询额外保留最多 4 个不同 Parent 的强词法候选，避免纯 dense 高分把可解释证据挤出；
+6. 合并最多 32 个 Child。
 
 召回阶段故意较宽。只有低置信 recall guard 的 Parent 不自动进入证据，但仍可作为 planner 的诊断候选。
 
@@ -182,6 +183,8 @@ Child 按 `parentId` 聚合，应用硬门：
 
 原来的 `max(lexical, vector) >= 0.70` 不再承担 v2 的最终资格语义。它会把大量相似候选一并放行，也会在跨表达时误杀可靠证据。
 
+Coverage 将 top1 recall guard 区分为强覆盖与弱回退：弱 top1 仍保留候选，但不再获得与明确词法覆盖相同的权重。结构化问题至少补充与子查询数相称的不同 Parent，再由冗余惩罚排序；无子查询的全局问题继续保留最多 6 个 Parent，避免为了“看起来精简”损失多事实召回。
+
 ### 5.4 Planner 触发
 
 普通长问题中的 `given that`、`what does this enable` 或普通 `when` 不再被当成独立指代/时态歧义。`memory-retrieval-plan` 只在以下情况出现：
@@ -195,7 +198,7 @@ Child 按 `parentId` 聚合，应用硬门：
 
 ## 6. Temporal supersession
 
-明确更新语句会比较新旧 Child：
+不超过 1024 字符且不含 document boundary 的明确更新语句会比较新旧 Child：
 
 ```text
 新 Child 与旧 active Child 有可靠词法锚点和相似度
@@ -206,6 +209,8 @@ Child 按 `parentId` 聚合，应用硬门：
 ```
 
 只有所有 Child 都失效时，整个 Parent 才退出当前检索。DSH 原始事件和 Parent `coreText` 始终保留，便于审计。
+
+长论文、调试文档和普通 “currently is / now is” 描述不参与自动 supersession，避免技术说明错误遮蔽整个历史候选集。
 
 ## 7. 分层和 DSH 生命周期
 
@@ -337,7 +342,7 @@ E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-202608
 
 不修改 DSH 核心和 engram；插件 Node 第三方运行依赖为 0。
 
-## 12. 当前验证结论（2026-08-25）
+## 12. 0.9 历史效果边界（2026-08-25）
 
 - 插件：68/68；Benchmark 合同：Node 3/3、Python 9/9；sidecar：2/2。
 - 无模型机制门：Parent 相对旧 flat chunk 减少 50.42%，平均 eligible 13.67、selected 2.25，整体与 4-hop fact recall 都是 1.0。
@@ -348,4 +353,19 @@ E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-202608
 
 ```text
 E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-20260825-01\03-final-report.md
+```
+
+## 13. 0.10 Development 冻结状态
+
+- 插件：70/70；Benchmark Node 3/3、Python 9/9。
+- 新 development 12 题与此前 smoke/development/held-out 共 26 题零重叠。
+- 修改前无模型 fact recall 0.9208；混合 rerank、词法候选保证和长文档 supersession 门控后为 0.9500；4-hop 为 1.0。
+- 实际故障样例 `memgym_ir__research__40739` 从候选 Parent 1、fact recall 0.25 修到候选 16、selected 3、fact recall 1.0。
+- 新完整模型矩阵固定为 `A8/C8/A16/C16/A32/C32/A256/C256/BFull`。Development 结果通过后才冻结新 held-out；held-out 通过前不切换正常 3080。
+
+权威计划和运行证据：
+
+```text
+E:\deepseek_memory\results\important-plans\parent-child-rerank-256k-complete-20260825-01\
+E:\deepseek_memory\results\important-tests\parent-child-rerank-256k-complete-20260825-01\
 ```

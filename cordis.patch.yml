@@ -11,7 +11,11 @@
         childUnionLimit: 32
         parentEligibleLimit: 16
         parentSelectLimit: 6
-        relativeScoreWindow: 0.12
+        relativeScoreWindow: 0.20
+        coverageLexicalMinimum: 0.35
+        coverageDenseMinimum: 0.75
+        coverageDenseMargin: 0.025
+        lexicalGuaranteePerQuery: 4
         evidenceQualityThreshold: 0.80
         ambiguityMargin: 0.15
         vectorProvider: http

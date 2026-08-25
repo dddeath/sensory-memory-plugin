@@ -1,8 +1,8 @@
 {
   "id": "sensory-memory",
-  "version": "0.9.0-parent-child-vector",
+  "version": "0.10.0-parent-child-rerank",
   "main": "./lib/index.js",
-  "description": "Parent/Child vector context offloading with session sensory and multi-hop retrieval",
+  "description": "Parent/Child vector context offloading with hybrid rerank and multi-hop coverage",
   "engines": {
     "dsh": ">=0.0.1"
   },

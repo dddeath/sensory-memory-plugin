@@ -75,6 +75,16 @@ test('explicit update supersedes an older similar chunk without creating a fact 
   assert.equal('canonicalFacts' in newChunk, false)
 })
 
+test('a long technical document mentioning current state does not supersede prior memory', async (t) => {
+  const { tools, exec, ledger } = fixture(t)
+  const old = JSON.parse(await tools.get('sensory_store').execute({ text: '项目M当前部署端口是8282。' }, exec))
+  const longTechnicalText = `--- document survey ---\n${'This survey explains that the current system is evaluated with project M deployment terminology, but it does not issue a configuration update. '.repeat(12)}`
+  await tools.get('sensory_store').execute({ text: longTechnicalText }, exec)
+  const oldChunk = ledger.get('sensoryChunks', old.chunkIds[0], { scopeKind: 'session', scopeId: 's' })
+  assert.equal(oldChunk.temporalCurrent, true)
+  assert.equal(oldChunk.supersededBy, null)
+})
+
 test('tool schemas expose chunk rather than entity parameters', (t) => {
   const { tools } = fixture(t)
   assert.deepEqual(Object.keys(tools.get('sensory_open').parameters.properties), ['chunk'])

@@ -77,6 +77,21 @@ test('multi-hop retrieval aggregates child hits and selects distinct parents for
   assert.deepEqual(result.uncoveredSubqueries, [])
 })
 
+test('structured retrieval keeps complementary parents after one broad parent covers every clause', (t) => {
+  const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
+  put(ledger, makeParent(vectorEncoder, { id: 'broad', seq: 1, text: '蓝灯塔项目同时讨论钥匙、银杏校验词、端口和东区负责人，但没有给出具体值。' }))
+  put(ledger, makeParent(vectorEncoder, { id: 'key', seq: 2, text: '蓝灯塔档案柜钥匙位于北侧绿色箱子，校验词是银杏-47。' }))
+  put(ledger, makeParent(vectorEncoder, { id: 'port', seq: 3, text: '项目M端口是8383，东区负责人是林澄。' }))
+  const result = matcher.retrieve('蓝灯塔钥匙和银杏校验词是什么；项目M端口是多少；东区负责人是谁', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(result.sufficient, true)
+  assert.ok(result.selected.length >= 2)
+  assert.ok(result.selected.some((parent) => parent.id !== 'broad'))
+  assert.ok(result.selected.some((parent) => ['key', 'port'].includes(parent.id)))
+  const status = matcher.status().lastResult
+  assert.equal(status.selected.length, result.selected.length)
+  assert.ok(status.candidates.every((parent) => parent.coverageBySubquery))
+})
+
 test('pending parent and low-evidence parent remain diagnostics rather than automatic evidence', (t) => {
   const { ledger, matcher, vectorEncoder } = runtimeFixture(t)
   put(ledger, makeParent(vectorEncoder, { id: 'pending', seq: 1, text: '项目P端口是7001。', state: 'pending-vector' }))
