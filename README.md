@@ -361,7 +361,9 @@ E:\deepseek_memory\results\important-tests\parent-child-vector-matcher-v2-202608
 - 新 development 12 题与此前 smoke/development/held-out 共 26 题零重叠。
 - 修改前无模型 fact recall 0.9208；混合 rerank、词法候选保证和长文档 supersession 门控后为 0.9500；4-hop 为 1.0。
 - 实际故障样例 `memgym_ir__research__40739` 从候选 Parent 1、fact recall 0.25 修到候选 16、selected 3、fact recall 1.0。
-- 新完整模型矩阵固定为 `A8/C8/A16/C16/A32/C32/A256/C256/BFull`。Development 结果通过后才冻结新 held-out；held-out 通过前不切换正常 3080。
+- 新完整模型矩阵为 `A8/C8/A16/C16/A32/C32/A256/C256/BFull`。Development 108/108 全门通过；零重叠 held-out 108/108 完成。
+- Held-out：8K +0.1083、16K -0.0583、32K -0.0083、256K +0.0333；4-hop 32K +0.075、256K +0.075。C fact recall 0.9444，低于预注册 0.95。
+- 结论限于“256K 平均与 4-hop 均有小幅正增益”；完整 held-out 总门未通过，因此不切换正常 3080，也不使用该 held-out 继续调参。
 
 权威计划和运行证据：
 
