@@ -76,6 +76,23 @@ test('surface replacement publishes an exact token-meter shadow price immediatel
   assert.deepEqual(replacement.sourceEventSeqs, [1, 2])
 })
 
+test('an already shadowed source range transitions without emitting an invalid replace op', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-already-shadowed-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = new MemoryLedger(join(dir, 'ledger'))
+  const surface = new MemorySurfaceProjector({ ledger })
+  const s = session()
+  s.surface = { nodes: new Set([99]) }
+  const segment = { id: 'segment-shadowed', sessionId: 's', firstSeq: 1, lastSeq: 2, sourceSeqs: [1, 2], surfaceRevision: 0 }
+  const result = surface.replaceSegment(s, segment, { text: 'checkpoint', transition: 'context-pressure' })
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.reason, 'source-range-not-visible')
+  assert.equal(result.lineage.surfaceAlreadyAbsent, true)
+  assert.equal(result.surfaceRevision, 0)
+  assert.equal(s.replacements.length, 0)
+})
+
 test('effective input cap uses the DSH token meter on the same pressure axis as native compaction', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'surface-pressure-axis-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))

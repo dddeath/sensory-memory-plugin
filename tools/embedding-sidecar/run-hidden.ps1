@@ -15,13 +15,25 @@ $PidPath = Join-Path $RuntimeDir 'pid.txt'
 $OutPath = Join-Path $RuntimeDir 'stdout.log'
 $ErrPath = Join-Path $RuntimeDir 'stderr.log'
 $LauncherPath = Join-Path $RuntimeDir 'sidecar.launch.ps1'
+$ServerPath = Join-Path $Root 'server.py'
 
 if (Test-Path $PidPath) {
   $Existing = [int](Get-Content -Raw $PidPath)
-  if (Get-Process -Id $Existing -ErrorAction SilentlyContinue) {
-    Write-Output "Embedding sidecar already running: PID $Existing"
-    exit 0
+  $ExistingProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$Existing" -ErrorAction SilentlyContinue
+  if ($ExistingProcess -and $ExistingProcess.Name -eq 'python.exe' -and $ExistingProcess.CommandLine -like "*$ServerPath*") {
+    $ExistingHealth = $null
+    try { $ExistingHealth = Invoke-RestMethod -UseBasicParsing -TimeoutSec 3 "http://127.0.0.1:$Port/health" } catch {}
+    if ($ExistingHealth -and $ExistingHealth.status -eq 'ready') {
+      Write-Output "Embedding sidecar already running: PID $Existing"
+      exit 0
+    }
+    $TaskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    $Stopped = Start-Process -FilePath $TaskKill -ArgumentList @('/PID', [string]$Existing, '/T', '/F') -NoNewWindow -Wait -PassThru
+    if ($Stopped.ExitCode -ne 0) { throw "stale sidecar taskkill failed with exit $($Stopped.ExitCode)" }
+    Write-Output "Stopped unhealthy embedding sidecar: PID $Existing"
   }
+  Remove-Item -LiteralPath $PidPath -Force
+  Write-Output "Removed stale embedding sidecar PID record: $Existing"
 }
 
 function ConvertTo-PsLiteral([string]$Value) { return "'" + $Value.Replace("'", "''") + "'" }
@@ -35,7 +47,6 @@ $Launcher = @(
 [System.IO.File]::WriteAllText($OutPath, '', (New-Object System.Text.UTF8Encoding($false)))
 [System.IO.File]::WriteAllText($ErrPath, '', (New-Object System.Text.UTF8Encoding($false)))
 $Outer = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', $LauncherPath) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
-$ServerPath = Join-Path $Root 'server.py'
 $DiscoverDeadline = [DateTime]::UtcNow.AddSeconds(10)
 $ProcessId = 0
 do {

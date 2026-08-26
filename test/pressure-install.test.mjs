@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { installChunkMemory } from '../lib/install-chunk-memory.js'
+import { SensoryMaintenance } from '../lib/sensory-maintenance.js'
 
 test('pressure runtime prepends pre-step so it can reduce pressure before native DSH compaction', () => {
   const listeners = []
@@ -20,4 +21,16 @@ test('pressure runtime prepends pre-step so it can reduce pressure before native
   const preStep = listeners.find((row) => row.name === 'agent/pre-step')
   assert.ok(preStep)
   assert.deepEqual(preStep.options, { prepend: true })
+})
+
+test('maintenance reports the enforced session-only sensory scope', () => {
+  const maintenance = new SensoryMaintenance({
+    runtime: {
+      ledger: {},
+      status(sessionId) { return { sessionId } },
+    },
+  })
+  const status = maintenance.status('session-1')
+  assert.equal(status.indexScope, 'session')
+  assert.equal(status.layered.sessionId, 'session-1')
 })
