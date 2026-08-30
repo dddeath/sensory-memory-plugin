@@ -193,6 +193,25 @@ test('retrieval-only benchmark budget returns one recall result and then asks th
   assert.equal(calls, 1)
 })
 
+test('retrieval-only default budget stops a third recall in the same turn', async () => {
+  let calls = 0
+  const tools = createSensoryToolDefinitions({
+    toolMode: 'retrieval-only', matcher: {},
+    runtime: {
+      config: { userGlobalEnabled: false },
+      async workspace() { return { workspaceId: 'w' } },
+      matcher: { async retrieveAsync() { calls += 1; return { candidates: [] } } },
+    },
+  })
+  const recall = tools.find((tool) => tool.name === 'sensory_recall')
+  const exec = { turn: 1, agent: { session: { id: 's' } } }
+  await recall.execute({ query: 'first' }, exec)
+  await recall.execute({ query: 'second' }, exec)
+  const third = JSON.parse(await recall.execute({ query: 'third' }, exec))
+  assert.equal(third.budgetExceeded, true)
+  assert.equal(calls, 2)
+})
+
 test('sensory_recall presents qualified parents by effective relevance', async () => {
   const candidate = (id, relevance) => ({
     id, label: id, layer: 'sensory', qualified: true, relevance, lexicalRelevance: 0.8, vectorRelevance: relevance,

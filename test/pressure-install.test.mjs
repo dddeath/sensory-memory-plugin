@@ -24,6 +24,7 @@ test('pressure runtime prepends pre-step so it can reduce pressure before native
   assert.ok(preStep)
   assert.deepEqual(preStep.options, { prepend: true })
   assert.match(contexts[0].text, /计数或汇总问题先枚举/u)
+  assert.match(contexts[0].text, /计划或准备执行不代表已经完成/u)
 })
 
 test('maintenance reports the enforced session-only sensory scope', () => {
