@@ -12,6 +12,7 @@ import { MemoryRetrievalPlanner } from '../../lib/memory-retrieval-planner.js'
 import { MemorySegmenter } from '../../lib/memory-segmenter.js'
 import { MemorySurfaceProjector } from '../../lib/memory-surface-projector.js'
 import { SemipersistentLayer } from '../../lib/semipersistent-layer.js'
+import { SurfaceBudgetController } from '../../lib/surface-budget-controller.js'
 import { FeatureHashVectorEncoder } from '../../lib/vector-encoder.js'
 
 export function runtimeFixture(t, config = {}) {
@@ -24,6 +25,7 @@ export function runtimeFixture(t, config = {}) {
   const semi = new SemipersistentLayer({ ledger, policy, config })
   const bank = new MemoryBank({ ledger, semipersistentLayer: semi, chunker, vectorEncoder, config })
   const surface = new MemorySurfaceProjector({ ledger, config })
+  const surfaceBudgetController = new SurfaceBudgetController(config)
   const readSource = (ref) => {
     for (const segment of ledger.list('sourceSegments', { scopeKind: 'session', scopeId: ref.sessionId })) {
       const record = (segment.records ?? []).find((item) => Number(item.seq) === Number(ref.seq))
@@ -42,13 +44,14 @@ export function runtimeFixture(t, config = {}) {
     semipersistentLayer: semi,
     bank,
     surfaceProjector: surface,
+    surfaceBudgetController,
     matcher,
     planner,
     chunker,
     vectorEncoder,
     config: { contextWindow: 2000, maxOutputTokens: 200, ...config },
   })
-  return { dir, runtime, ledger, policy, chunker, vectorEncoder, semi, bank, surface, matcher, planner, readSource }
+  return { dir, runtime, ledger, policy, chunker, vectorEncoder, semi, bank, surface, surfaceBudgetController, matcher, planner, readSource }
 }
 
 export function testSession({ id = 's', userText = '项目M的部署端口是8282。', assistantText = '已记录。' } = {}) {

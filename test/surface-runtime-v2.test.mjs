@@ -49,7 +49,7 @@ test('context pressure replaces the cold complete segment with a session sensory
   await runtime.ledger.drain('session:s', 1000)
   const current = { id: 'u5', role: 'user', content: [{ type: 'text', text: '完全无关的问题' }], source: { kind: 'user' } }
   await runtime.preStep({ agent, messages: [current], turn: 5, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
-  assert.equal(s.replacements.length, 1)
+  assert.equal(s.replacements.length, 3)
   assert.deepEqual(s.replacements[0].surfaceOp, { op: 'replace', start: 1, end: 2 })
   assert.equal(s.replacements[0].data.role, 'user')
   assert.equal(s.replacements[0].data.source.kind, 'plugin')
@@ -57,7 +57,10 @@ test('context pressure replaces the cold complete segment with a session sensory
   assert.match(s.replacements[0].data.content[0].text, /^⟦p[0-9a-z-]+⟧ \[1-2\]/u)
   assert.equal(s.replacements[0].data.content[0].text.includes('children:'), false)
   assert.equal(s.replacements[0].data.content[0].text.includes('sourceRefs:'), false)
-  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
+  assert.match(s.replacements.at(-1).data.content[0].text, /^⟦p[0-9a-z-]+⟧ \[1-2\]$/u)
+  const [parent] = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
+  assert.equal(parent.surfaceResidency, 'id-pointer')
+  assert.equal(parent.pointer.mode, 'id-only')
 })
 
 test('standard Parent pointer keeps a deterministic label within 24 estimated tokens', () => {

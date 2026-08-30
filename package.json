@@ -25,6 +25,7 @@
     "./memory-bank": "./lib/memory-bank.js",
     "./memory-surface-projector": "./lib/memory-surface-projector.js",
     "./pointer-label-compressor": "./lib/pointer-label-compressor.js",
+    "./surface-budget-controller": "./lib/surface-budget-controller.js",
     "./layered-match-engine": "./lib/layered-match-engine.js",
     "./memory-retrieval-planner": "./lib/memory-retrieval-planner.js",
     "./memory-transition-reviewer": "./lib/memory-transition-reviewer.js",
