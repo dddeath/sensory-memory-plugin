@@ -304,7 +304,7 @@ automaticRetrievalBelowPressure: false
 
 同一题的检索工具使用 Parent/Child ID 判断信息增益：重复 query、重复 Parent open 或连续检索没有新增证据时返回 `converged=true`，模型应直接根据已返回证据作答。`retrieval-only` Benchmark 默认每个工具最多 3 次、总动作最多 6 次；可用 `DSH_MEMORY_RETRIEVAL_TOOL_CALL_LIMIT` 显式调整。
 
-计数和汇总问题先把 matchedChildren 中仍待完成的独立对象或动作逐条列出，再计算总数；地点或类别的近义表达不作为删除来源证据的理由。
+计数和汇总问题先把 matchedChildren 中仍待完成的独立对象或动作逐条列出，再计算总数；同一交换事项中的取新件和退旧件是两个待办，除非问题明确要求按对象去重。地点或类别的近义表达不作为删除来源证据的理由。
 
 ## 10. 人类可执行入口
 

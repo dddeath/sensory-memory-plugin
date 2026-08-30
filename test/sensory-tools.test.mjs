@@ -193,6 +193,25 @@ test('retrieval-only benchmark budget returns one recall result and then asks th
   assert.equal(calls, 1)
 })
 
+test('sensory_recall presents qualified parents by effective relevance', async () => {
+  const candidate = (id, relevance) => ({
+    id, label: id, layer: 'sensory', qualified: true, relevance, lexicalRelevance: 0.8, vectorRelevance: relevance,
+    sourceRefs: [{ sessionId: 's', seq: relevance * 10 }], matchedSubqueries: ['S0'], admissionReasons: ['relative-window'],
+    childHits: [{ childId: `${id}:child:001`, startOffset: 0, endOffset: 20, excerpt: id, excerptTruncated: false, matchedQueries: ['S0'], matchedQueryText: ['query'], matchedTokens: ['query'], bestScore: relevance, coverage: {} }],
+  })
+  const tools = createSensoryToolDefinitions({
+    toolMode: 'retrieval-only', matcher: {},
+    runtime: {
+      config: { userGlobalEnabled: false },
+      async workspace() { return { workspaceId: 'w' } },
+      matcher: { async retrieveAsync() { return { candidates: [candidate('lower', 0.81), candidate('higher', 0.92)] } } },
+    },
+  })
+  const recall = tools.find((tool) => tool.name === 'sensory_recall')
+  const output = JSON.parse(await recall.execute({ query: 'query' }, { turn: 1, agent: { session: { id: 's' } } }))
+  assert.deepEqual(output.chunks.map((chunk) => chunk.chunkId), ['higher', 'lower'])
+})
+
 test('compression-only tool mode exposes no memory tools', () => {
   const tools = createSensoryToolDefinitions({
     matcher: { scopeFor: () => 's' },
