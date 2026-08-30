@@ -271,7 +271,7 @@ test('forget tombstones bank retrieval and removes linked semipersistent project
 })
 
 test('benchmark finalize lands remaining working history while ordinary dispose-style drain keeps it working', async (t) => {
-  const { runtime } = fixture(t)
+  const { runtime, ledger } = fixture(t)
   const s = session()
   const agent = { cwd: 'E:/bench', session: s }
   await runtime.turnStopping({ agent, turn: 1 })
@@ -280,6 +280,42 @@ test('benchmark finalize lands remaining working history while ordinary dispose-
   const finalized = await runtime.finalizeSession('s')
   assert.equal(finalized.transitions[0].transition, 'working-to-sensory')
   assert.equal(runtime.layerCounts('s', 'w').working, 0)
+  const [parent] = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
+  assert.equal(parent.surfaceResidency, 'labeled-pointer')
+  assert.equal(parent.pointer.mode, 'legacy-preview')
+  assert.equal(Number.isFinite(parent.pointer.eventSeq), true)
+  assert.equal(parent.pointer.estimatedTokens > 0, true)
+  assert.equal(runtime.layerCounts('s', 'w').surfaceResidency.labeledPointer > 0, true)
+})
+
+test('surface budget separates fixed floor, working history and plugin projections', () => {
+  const surface = new MemorySurfaceProjector({ ledger: null, config: { effectiveInputCapTokens: 100 } })
+  const budget = surface.budget({
+    sessionId: 's',
+    contextWindow: 1000,
+    maxOutputTokens: 200,
+    request: {
+      system: 'system-prefix',
+      tools: [{ name: 'tool-a' }],
+      messages: [
+        { role: 'user', content: 'old user' },
+        { role: 'assistant', content: 'old assistant' },
+        { role: 'user', content: 'pointer', source: { kind: 'plugin', purpose: 'sensory-checkpoint' } },
+        { role: 'user', content: 'evidence', source: { kind: 'plugin', purpose: 'sensory-catalog' } },
+        { role: 'user', content: 'current user' },
+      ],
+    },
+  })
+  assert.equal(budget.surfaceComponents.headerComplete, true)
+  assert.equal(budget.surfaceComponents.system > 0, true)
+  assert.equal(budget.surfaceComponents.tools > 0, true)
+  assert.equal(budget.surfaceComponents.currentTurn > 0, true)
+  assert.equal(budget.surfaceComponents.workingHistory > 0, true)
+  assert.equal(budget.surfaceComponents.sensoryPointers > 0, true)
+  assert.equal(budget.surfaceComponents.retrievalEvidence > 0, true)
+  assert.equal(budget.fixedFloorTokens, budget.surfaceComponents.system + budget.surfaceComponents.tools + budget.surfaceComponents.currentTurn)
+  assert.equal(budget.managedSurfaceTokens, budget.surfaceComponents.managedSurface)
+  assert.equal(typeof budget.targetReachable, 'boolean')
 })
 
 test('benchmark cleanup drains and drops the session without a second surface finalization', async (t) => {
