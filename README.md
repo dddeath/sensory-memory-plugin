@@ -283,7 +283,7 @@ automaticRetrievalBelowPressure: false
 |---|---|
 | `sensory_store({text})` | 写入当前 session 的 Parent 和 Child vectors。 |
 | `sensory_recall({query,limit})` | 只读显示 Parent ID、最高分 matchedChildren、coverage 和本题信息增益。 |
-| `sensory_open({chunk})` | 优先展开已命中的 Child 邻域；直接打开时返回最多 6000 字符的 Parent current view，并记录强关联。 |
+| `sensory_open({chunk})` | 按 Child offsets 展开完整命中 Child；直接打开时返回最多 6000 字符的 Parent current view，并记录强关联。 |
 | `sensory_demote({sourceSeq})` | 把包含该 seq 的完整工作 segment 卸载。 |
 | `sensory_status()` | 查看 Parent/Child、matcher、向量和迁移状态。 |
 | `sensory_cache_status()` | 兼容名称；实际查看半持久 Parent 投影。 |

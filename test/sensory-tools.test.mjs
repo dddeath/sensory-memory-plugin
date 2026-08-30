@@ -67,6 +67,24 @@ test('sensory_recall discloses the matched child instead of the beginning of a l
   assert.equal(recalled.disclosure, 'matched-child-first')
 })
 
+test('sensory_open expands the complete matched child beyond the recall excerpt', async (t) => {
+  const { tools, exec, ledger, vectorEncoder } = fixture(t)
+  const childText = `I need to pick up the new boots from Zara. ${'Pickup planning details. '.repeat(55)} I also need to return the old boots.`
+  const parent = {
+    id: 'boots-parent', kind: 'context-parent', label: 'boots errand', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w',
+    segmentId: 'boots-source', coreText: childText, contextText: childText,
+    childSpans: [{ childId: 'boots-parent:child:001', startOffset: 0, endOffset: childText.length, temporalCurrent: true, vector: vectorEncoder.encodeSync(childText) }],
+    sourceRefs: [{ sessionId: 's', seq: 8 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true, state: 'active',
+  }
+  ledger.upsert('sourceSegments', { id: 'boots-source', sessionId: 's', records: [{ seq: 8, role: 'user', sourceKind: 'user', text: childText }] }, { scopeKind: 'session', scopeId: 's', id: 'boots-source' })
+  ledger.upsert('sensoryChunks', parent, { scopeKind: 'session', scopeId: 's', id: parent.id })
+  const recalled = JSON.parse(await tools.get('sensory_recall').execute({ query: 'pick up new boots Zara', limit: 3 }, exec))
+  assert.doesNotMatch(recalled.chunks[0].excerpt, /return the old boots/u)
+  const opened = JSON.parse(await tools.get('sensory_open').execute({ chunk: parent.id }, exec))
+  assert.equal(opened.disclosure.mode, 'expanded-matched-child')
+  assert.match(opened.coreText, /return the old boots/u)
+})
+
 test('retrieval convergence suppresses duplicate evidence and duplicate parent opens', async (t) => {
   const { tools, exec } = fixture(t)
   const stored = JSON.parse(await tools.get('sensory_store').execute({ text: '蓝灯塔钥匙在绿色盒子里，短语是银杏-47。' }, exec))
