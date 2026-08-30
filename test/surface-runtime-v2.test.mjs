@@ -147,6 +147,82 @@ test('benchmark finalize groups adjacent working turns into one sensory Parent',
   assert.deepEqual(s.replacements[0].surfaceOp, { op: 'replace', start: 1, end: 6 })
 })
 
+test('one multi-chunk segment owns one Provider surface pointer', async (t) => {
+  const { runtime, ledger } = runtimeFixture(t, { parentMaxTokens: 3000 })
+  const s = testSession({
+    userText: `文档开始\n${'项目M的部署记录与负责人说明。'.repeat(700)}\n文档结束`,
+    assistantText: '已记录。',
+  })
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.ledger.drain('session:s', 1000)
+  await runtime.finalizeSession('s')
+  const parents = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
+  assert.equal(parents.length > 1, true)
+  assert.equal(parents.filter((parent) => parent.surfacePointerOwner === true).length, 1)
+  assert.equal(parents.filter((parent) => parent.surfaceResidency === 'labeled-pointer').length, 1)
+  assert.equal(parents.filter((parent) => parent.surfaceResidency === 'detached').length, parents.length - 1)
+  assert.equal(runtime.layerCounts('s', 'w').surfaceResidency.surfacePointerCount, 1)
+})
+
+test('legacy sibling chunks sharing one pointer are rewritten once per compression level', async (t) => {
+  const { runtime, ledger } = runtimeFixture(t, { effectiveInputCapTokens: 4 })
+  const events = [{
+    seq: 1,
+    type: 'user/message',
+    data: { id: 'pointer-old', role: 'user', content: [{ type: 'text', text: '⟦p1-2-0⟧ [1-2] old label' }], source: { kind: 'plugin', purpose: 'sensory-checkpoint' } },
+  }]
+  const nodes = [1]
+  const replacements = []
+  const s = {
+    id: 's',
+    events,
+    replacements,
+    header: { cwd: 'E:/bench' },
+    get surface() { return { nodes } },
+    deriveMessages() {
+      return nodes.map((seq) => events.find((event) => event.seq === seq))
+        .map((event) => event?.type === 'assistant/message' ? event.data.message : event?.data)
+        .filter((message) => message?.content?.length !== 0)
+    },
+    append(type, data, options = {}) {
+      const event = { seq: Math.max(...events.map((item) => item.seq)) + 1, type, data, ...options }
+      if (options.surfaceOp?.op === 'replace') {
+        const start = nodes.indexOf(options.surfaceOp.start)
+        const end = nodes.indexOf(options.surfaceOp.end)
+        if (start < 0 || end < 0) throw new Error(`invalid test surface range ${options.surfaceOp.start}-${options.surfaceOp.end}`)
+        nodes.splice(start, end - start + 1, event.seq)
+        replacements.push(event)
+      } else {
+        nodes.push(event.seq)
+      }
+      events.push(event)
+      return event
+    },
+  }
+  ledger.upsert('sourceSegments', {
+    id: 'segment-old', segmentId: 'segment-old', sessionId: 's', workspaceId: 'w', state: 'sensory',
+    replacementLineage: [{ transition: 'context-pressure' }], records: [], sourceSeqs: [1], firstSeq: 1, lastSeq: 1,
+  }, { scopeKind: 'session', scopeId: 's', id: 'segment-old' })
+  for (let index = 0; index < 2; index += 1) {
+    ledger.upsert('sensoryChunks', {
+      id: `parent-${index}`, parentIndex: index, segmentId: 'segment-old', sessionId: 's', workspaceId: 'w',
+      scopeKind: 'session', scopeId: 's', kind: 'context-parent', state: 'active', coreText: `项目M证据${index}`,
+      sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceSourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9,
+      verifiedSource: true, temporalCurrent: true, surfaceResidency: 'labeled-pointer',
+      pointer: { pointerId: 'p1-2-0', mode: 'labeled', label: 'old label', eventSeq: 1, estimatedTokens: 20, contentTokens: 20, revision: 1 },
+      associations: [], firstSeq: 1, lastSeq: 1,
+    }, { scopeKind: 'session', scopeId: 's', id: `parent-${index}` })
+  }
+  const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  await runtime.preStep({ agent: { cwd: 'E:/bench', session: s }, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  const parents = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
+  assert.equal(replacements.length, 3)
+  assert.deepEqual(replacements.map((event) => event.surfaceOp.start), [1, replacements[0].seq, replacements[1].seq])
+  assert.equal(parents.every((parent) => parent.surfaceResidency === 'detached'), true)
+  assert.equal(runtime.layerCounts('s', 'w').surfaceResidency.surfacePointerCount, 0)
+})
+
 test('surface replacement publishes an exact token-meter shadow price immediately before the replacement', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'surface-shadow-price-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -229,6 +305,20 @@ test('an already shadowed source range transitions without emitting an invalid r
   assert.equal(result.reason, 'source-range-not-visible')
   assert.equal(result.lineage.surfaceAlreadyAbsent, true)
   assert.equal(result.surfaceRevision, 0)
+  assert.equal(s.replacements.length, 0)
+})
+
+test('a partially shadowed source range is reported before DSH append', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-partially-shadowed-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const surface = new MemorySurfaceProjector({ ledger: new MemoryLedger(join(dir, 'ledger')) })
+  const s = session()
+  s.surface = { nodes: new Set([2]) }
+  const result = surface.replaceSegment(s, { id: 'partial', sessionId: 's', firstSeq: 1, lastSeq: 2, surfaceRevision: 0 }, { text: 'checkpoint' })
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'source-range-boundary-not-visible')
+  assert.equal(result.startVisible, false)
+  assert.equal(result.endVisible, true)
   assert.equal(s.replacements.length, 0)
 })
 
