@@ -43,12 +43,16 @@ test('benchmark can select a visible lexical-only ablation instead of an E5 endp
     vectorRequired: true,
   }, {
     DSH_MEMORY_VECTOR_PROVIDER: 'none',
+    DSH_MEMORY_VECTOR_TIMEOUT_MS: '30000',
+    DSH_MEMORY_VECTOR_BATCH_SIZE: '8',
     DSH_MEMORY_TOOL_MODE: 'retrieval-only',
     DSH_MEMORY_RETRIEVAL_TOOL_CALL_LIMIT: '1',
   })
   assert.equal(config.vectorProvider, 'none')
   assert.equal(config.vectorEndpoint, null)
   assert.equal(config.vectorRequired, false)
+  assert.equal(config.vectorTimeoutMs, 30000)
+  assert.equal(config.vectorBatchSize, 8)
   assert.equal(config.toolMode, 'retrieval-only')
   assert.equal(config.retrievalToolCallLimit, 1)
   assert.equal(config.indexScope, 'session')

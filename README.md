@@ -136,6 +136,15 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 
 正式 Benchmark 设置 `vectorRequired=true`：模型、revision、维度或服务状态不符时，环境门失败，不产正式分数。普通 DSH 设置 `vectorRequired=false`：主动配置无向量时是 `lexical-only`；HTTP sidecar 失败后继续工作的请求明确标记为 `lexical-fallback`、`degraded=true` 和具体错误，不再伪装成 hybrid。服务恢复后 maintenance 可以补齐 Child vectors。
 
+CPU Sidecar 的 passage 批处理会持有同一模型锁。正式压力实验可显式缩短单批持锁时间并放宽排队尾延迟：
+
+```powershell
+$env:DSH_MEMORY_VECTOR_BATCH_SIZE = '8'
+$env:DSH_MEMORY_VECTOR_TIMEOUT_MS = '30000'
+```
+
+默认仍是 batch 32、timeout 5 秒；`sensory_status()` 会同时显示实际 `batchSize` 和 `timeoutMs`，避免把超时配置和模型延迟混在一起。
+
 插件 Node 运行依赖数量仍为 0。Python sidecar 使用独立 `.venv`，不把模型文件提交到 Git。
 
 ## 5. Matcher v2
@@ -264,6 +273,7 @@ automaticRetrievalBelowPressure: false
 - 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，证据注入受该headroom约束，避免重新把输入推满。
 - Parent 太大放不下时跳过，绝不重新切成碎片注入。
 - `DSH_MEMORY_VECTOR_REQUIRED=true` 让正式 Benchmark 在 E5 失败时终止该题；普通环境仍可显式降级并报告。
+- `DSH_MEMORY_VECTOR_BATCH_SIZE` 与 `DSH_MEMORY_VECTOR_TIMEOUT_MS` 只覆盖当前 DSH 进程的 E5 批大小和 HTTP 排队上限，适合隔离实验，不改变普通 profile 默认值。
 - 插件 listener 使用 prepend，使65%无损卸载有机会先于 DSH 默认80%原生摘要执行；原生 compaction仍保留为相同安全兜底。
 
 ## 9. DSH 工具

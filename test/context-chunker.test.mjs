@@ -118,4 +118,5 @@ test('HTTP vector adapter accepts a local small-model sidecar contract', async (
   assert.equal(vectors.length, 2)
   assert.equal(vectors[0].model, 'test/e5')
   assert.equal(vectors[0].dimensions, 3)
+  assert.equal(encoder.status().timeoutMs, 5000)
 })
