@@ -46,3 +46,14 @@ test('compact pointer keeps high-information numbers and mixed identifiers', () 
   assert.equal(compact.rendered.estimatedTokens <= 12, true)
 })
 
+test('pointer budget controller detaches cold ID-only parents when zero surface budget remains', () => {
+  const controller = new SurfaceBudgetController()
+  const result = controller.plan([
+    parent('cold', 1, '旧发布记录'),
+    parent('protected', 20, '开放任务记录', { pinned: true }),
+  ], { budgetTokens: 0 })
+  const detached = result.actions.filter((action) => action.to === 'detached')
+  assert.deepEqual(detached.map((action) => action.parentId), ['cold'])
+  assert.equal(detached[0].rendered.estimatedTokens, 0)
+  assert.equal(result.targetReached, false)
+})

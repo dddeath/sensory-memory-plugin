@@ -49,7 +49,7 @@ test('context pressure replaces the cold complete segment with a session sensory
   await runtime.ledger.drain('session:s', 1000)
   const current = { id: 'u5', role: 'user', content: [{ type: 'text', text: '完全无关的问题' }], source: { kind: 'user' } }
   await runtime.preStep({ agent, messages: [current], turn: 5, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
-  assert.equal(s.replacements.length, 3)
+  assert.equal(s.replacements.length, 4)
   assert.deepEqual(s.replacements[0].surfaceOp, { op: 'replace', start: 1, end: 2 })
   assert.equal(s.replacements[0].data.role, 'user')
   assert.equal(s.replacements[0].data.source.kind, 'plugin')
@@ -57,10 +57,13 @@ test('context pressure replaces the cold complete segment with a session sensory
   assert.match(s.replacements[0].data.content[0].text, /^⟦p[0-9a-z-]+⟧ \[1-2\]/u)
   assert.equal(s.replacements[0].data.content[0].text.includes('children:'), false)
   assert.equal(s.replacements[0].data.content[0].text.includes('sourceRefs:'), false)
-  assert.match(s.replacements.at(-1).data.content[0].text, /^⟦p[0-9a-z-]+⟧ \[1-2\]$/u)
+  assert.equal(s.replacements.at(-1).type, 'assistant/message')
+  assert.deepEqual(s.replacements.at(-1).data.message.content, [])
   const [parent] = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
-  assert.equal(parent.surfaceResidency, 'id-pointer')
-  assert.equal(parent.pointer.mode, 'id-only')
+  assert.equal(parent.surfaceResidency, 'detached')
+  assert.equal(parent.pointer.mode, 'none')
+  const recalled = await runtime.matcher.retrieveAsync('项目M部署端口8282', { sessionId: 's', workspaceId: 'w' })
+  assert.equal(recalled.candidates.some((candidate) => candidate.id === parent.id), true)
 })
 
 test('standard Parent pointer keeps a deterministic label within 24 estimated tokens', () => {
@@ -163,6 +166,53 @@ test('surface replacement publishes an exact token-meter shadow price immediatel
   assert.equal(replacement.type, 'user/message')
   assert.deepEqual(replacement.surfaceOp, { op: 'replace', start: 1, end: 2 })
   assert.deepEqual(replacement.sourceEventSeqs, [1, 2])
+})
+
+test('detached Parent replacement remains in raw events and produces zero derived Provider messages', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'surface-detached-parent-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ledger = new MemoryLedger(join(dir, 'ledger'))
+  const surface = new MemorySurfaceProjector({ ledger, tokenMeter: { estimateMessage: () => 5 } })
+  const events = [{
+    seq: 1,
+    type: 'user/message',
+    data: { id: 'pointer', role: 'user', content: [{ type: 'text', text: '⟦p1-2-0⟧ [1-2]' }], source: { kind: 'plugin', purpose: 'sensory-checkpoint' } },
+    surfaceOp: 'append',
+  }]
+  const nodes = [1]
+  const s = {
+    id: 's',
+    events,
+    surface: { get nodes() { return nodes } },
+    deriveMessages() {
+      return nodes.map((seq) => events.find((event) => event.seq === seq))
+        .map((event) => event.type === 'assistant/message' ? event.data.message : event.data)
+        .filter((message) => message?.content?.length !== 0)
+    },
+    append(type, data, options = {}) {
+      const event = { seq: events.length + 1, type, data, ...options }
+      events.push(event)
+      if (options.surfaceOp?.op === 'replace') {
+        const start = nodes.indexOf(options.surfaceOp.start)
+        const end = nodes.indexOf(options.surfaceOp.end)
+        nodes.splice(start, end - start + 1, event.seq)
+      }
+      return event
+    },
+  }
+  const parent = {
+    id: 'parent-1',
+    sessionId: 's',
+    turn: 1,
+    pointer: { pointerId: 'p1-2-0', eventSeq: 1, revision: 1 },
+  }
+  const result = surface.detachSensoryPointer(s, parent)
+  assert.equal(result.ok, true)
+  assert.equal(result.lineage.surfaceMessageProduced, false)
+  assert.equal(result.event.type, 'assistant/message')
+  assert.equal(s.deriveMessages().length, 0)
+  assert.equal(events[0].data.content[0].text, '⟦p1-2-0⟧ [1-2]')
+  assert.equal(events.some((event) => event.type === 'compaction/prune'), true)
 })
 
 test('an already shadowed source range transitions without emitting an invalid replace op', (t) => {
