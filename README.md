@@ -13,7 +13,7 @@
 → 标准pointer、压缩label、ID-only、detached逐级压回35%
 → fixed prefix超过35%时记录原因并交给DSH原生compaction
 → 后续查询只检索已经卸载的 Child
-→ Child 命中聚合回 Parent，按需把完整 Parent current view 放回上下文
+→ Child 命中聚合回 Parent，先披露命中 Child，缺少相邻上下文时再有界展开 Parent
 ```
 
 这样同时解决两个问题：
@@ -44,7 +44,7 @@
 }
 ```
 
-- Parent 是 Layer Ledger 中的 mutation 单位、来源核验单位、关联单位和模型披露单位。
+- Parent 是 Layer Ledger 中的 mutation 单位、来源核验单位和关联单位；模型先看到命中的 Child 片段，再按需展开 Parent。
 - Parent保持原始document边界；达到压力后可把同一边界内最多8个相邻turn聚合成一个Parent。
 - `coreText` 不因更新而改写；旧事实通过 `supersededRanges` 从 current view 中移除。
 - session sensory 只能被同一 session 检索。
@@ -69,7 +69,7 @@
 
 - Child 没有独立 scope、sourceRefs、association、layer 或 Ledger collection。
 - overlap 只进入 Child 的 embedding text；Parent 原文不会重复。
-- 命中 Child 后返回其 Parent，不把 Child 直接放入 prompt。
+- 命中 Child 后仍以 Parent ID 作为打开和关联单位，但 `sensory_recall` 会直接返回最高分 Child 片段，避免只显示 Parent 开头。
 
 ## 3. 默认切分参数
 
@@ -272,6 +272,7 @@ automaticRetrievalBelowPressure: false
 - `effectiveInputCapTokens` 未设置时，沿用 routed context window 减输出预留；隔离 Benchmark 可用环境变量 `DSH_MEMORY_EFFECTIVE_INPUT_CAP_TOKENS` 把 A/C 放到同一压力轴。显式值是权威实验 cap，可覆盖 provider 注册表中过时的 context metadata；设置前必须用真实 warmup usage 完成一次压力校准。
 - 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，证据注入受该headroom约束，避免重新把输入推满。
 - Parent 太大放不下时跳过，绝不重新切成碎片注入。
+- 合格 Parent 因目录预算放不下时，pre-step 插入小型 `sensory-retrieval-hint`，要求模型调用一次 `sensory_recall`；提示不复制 Parent 原文。
 - `DSH_MEMORY_VECTOR_REQUIRED=true` 让正式 Benchmark 在 E5 失败时终止该题；普通环境仍可显式降级并报告。
 - `DSH_MEMORY_VECTOR_BATCH_SIZE` 与 `DSH_MEMORY_VECTOR_TIMEOUT_MS` 只覆盖当前 DSH 进程的 E5 批大小和 HTTP 排队上限，适合隔离实验，不改变普通 profile 默认值。
 - 插件 listener 使用 prepend，使65%无损卸载有机会先于 DSH 默认80%原生摘要执行；原生 compaction仍保留为相同安全兜底。
@@ -281,8 +282,8 @@ automaticRetrievalBelowPressure: false
 | 工具 | 作用 |
 |---|---|
 | `sensory_store({text})` | 写入当前 session 的 Parent 和 Child vectors。 |
-| `sensory_recall({query,limit})` | 只读显示 Parent 候选、Child hits 和 coverage。 |
-| `sensory_open({chunk})` | 展开 Parent current/raw view 与 sourceRefs，并记录强关联。 |
+| `sensory_recall({query,limit})` | 只读显示 Parent ID、最高分 matchedChildren、coverage 和本题信息增益。 |
+| `sensory_open({chunk})` | 优先展开已命中的 Child 邻域；直接打开时返回最多 6000 字符的 Parent current view，并记录强关联。 |
 | `sensory_demote({sourceSeq})` | 把包含该 seq 的完整工作 segment 卸载。 |
 | `sensory_status()` | 查看 Parent/Child、matcher、向量和迁移状态。 |
 | `sensory_cache_status()` | 兼容名称；实际查看半持久 Parent 投影。 |
@@ -300,6 +301,8 @@ automaticRetrievalBelowPressure: false
 | `sensory_debug_working_prompt` | 工作消息、source、block、tool-call/result 配对和迁移。 |
 
 大输出请使用 `output=document`，避免在对话里回显几十万字符。
+
+同一题的检索工具使用 Parent/Child ID 判断信息增益：重复 query、重复 Parent open 或连续检索没有新增证据时返回 `converged=true`，模型应直接根据已返回证据作答。`retrieval-only` Benchmark 默认每个工具最多 3 次、总动作最多 6 次；可用 `DSH_MEMORY_RETRIEVAL_TOOL_CALL_LIMIT` 显式调整。
 
 ## 10. 人类可执行入口
 

@@ -43,6 +43,61 @@ test('sensory_recall returns chunks and sensory_open expands the exact source', 
   assert.match(opened.sources[0].content.text, /银杏-47/)
 })
 
+test('sensory_recall discloses the matched child instead of the beginning of a long parent', async (t) => {
+  const { tools, exec, ledger, vectorEncoder } = fixture(t)
+  const beginning = `${'Guitar learning notes and practice routines. '.repeat(35)}\n`
+  const target = 'I created a Spotify playlist named Summer Vibes for the beach trip.'
+  const coreText = beginning + target
+  const parent = {
+    id: 'playlist-parent', kind: 'context-parent', label: 'long conversation parent',
+    scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', segmentId: 'playlist-source',
+    coreText, contextText: coreText, documentId: 'playlist-source', documentTitle: 'conversation history',
+    childSpans: [
+      { childId: 'playlist-parent:child:001', startOffset: 0, endOffset: beginning.length, temporalCurrent: true, vector: vectorEncoder.encodeSync(beginning) },
+      { childId: 'playlist-parent:child:002', startOffset: beginning.length, endOffset: coreText.length, temporalCurrent: true, vector: vectorEncoder.encodeSync(target) },
+    ],
+    sourceRefs: [{ sessionId: 's', seq: 7 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true, state: 'active',
+  }
+  ledger.upsert('sourceSegments', { id: 'playlist-source', sessionId: 's', records: [{ seq: 7, role: 'user', sourceKind: 'user', text: coreText }] }, { scopeKind: 'session', scopeId: 's', id: 'playlist-source' })
+  ledger.upsert('sensoryChunks', parent, { scopeKind: 'session', scopeId: 's', id: parent.id })
+  const recalled = JSON.parse(await tools.get('sensory_recall').execute({ query: 'Spotify playlist name', limit: 3 }, exec))
+  assert.equal(recalled.chunks[0].chunkId, 'playlist-parent')
+  assert.match(recalled.chunks[0].excerpt, /Summer Vibes/u)
+  assert.match(recalled.chunks[0].matchedChildren[0].excerpt, /Summer Vibes/u)
+  assert.equal(recalled.disclosure, 'matched-child-first')
+})
+
+test('retrieval convergence suppresses duplicate evidence and duplicate parent opens', async (t) => {
+  const { tools, exec } = fixture(t)
+  const stored = JSON.parse(await tools.get('sensory_store').execute({ text: '蓝灯塔钥匙在绿色盒子里，短语是银杏-47。' }, exec))
+  const first = JSON.parse(await tools.get('sensory_recall').execute({ query: '蓝灯塔 钥匙', limit: 3 }, exec))
+  assert.equal(first.convergence.reason, 'new-evidence')
+  const duplicate = JSON.parse(await tools.get('sensory_recall').execute({ query: '  蓝灯塔   钥匙  ', limit: 3 }, exec))
+  assert.equal(duplicate.converged, true)
+  assert.equal(duplicate.reason, 'duplicate-query')
+  const opened = JSON.parse(await tools.get('sensory_open').execute({ chunk: stored.chunkIds[0] }, exec))
+  assert.equal(opened.found, true)
+  const duplicateOpen = JSON.parse(await tools.get('sensory_open').execute({ chunk: stored.chunkIds[0] }, exec))
+  assert.equal(duplicateOpen.converged, true)
+  assert.equal(duplicateOpen.reason, 'duplicate-parent-open')
+})
+
+test('sensory_open returns a bounded disclosure for a large parent', async (t) => {
+  const { tools, exec, ledger } = fixture(t)
+  const coreText = `大型上下文开始。${'完整记录内容。'.repeat(2200)}目标标记END-731。`
+  ledger.upsert('sourceSegments', { id: 'large-source', sessionId: 's', records: [{ seq: 9, role: 'user', sourceKind: 'user', text: coreText }] }, { scopeKind: 'session', scopeId: 's', id: 'large-source' })
+  ledger.upsert('sensoryChunks', {
+    id: 'large-parent', kind: 'context-parent', label: 'large', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w',
+    segmentId: 'large-source', coreText, contextText: coreText, sourceRefs: [{ sessionId: 's', seq: 9 }], evidenceQuality: 0.9,
+    verifiedSource: true, temporalCurrent: true, state: 'active',
+  }, { scopeKind: 'session', scopeId: 's', id: 'large-parent' })
+  const opened = JSON.parse(await tools.get('sensory_open').execute({ chunk: 'large-parent' }, exec))
+  assert.equal(opened.found, true)
+  assert.equal(opened.coreText.length <= 6001, true)
+  assert.equal(opened.disclosure.mode, 'bounded-parent-view')
+  assert.equal(opened.disclosure.truncated, true)
+})
+
 test('sensory_demote replaces one tracked segment and persists chunk IDs', async (t) => {
   const { tools, runtime, ledger, session, exec } = fixture(t)
   await storeTurn(runtime, session, 1)

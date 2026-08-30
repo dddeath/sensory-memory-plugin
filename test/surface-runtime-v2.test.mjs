@@ -451,6 +451,32 @@ test('manual sensory storage alone does not cause automatic low-pressure retriev
   assert.equal(runtime.status('s', 'w').lastPreStep.retrievalSkipped, 'below-pressure-no-offloaded-context')
 })
 
+test('a verified match that cannot fit a whole Parent injects a compact retrieval tool hint', async (t) => {
+  const { runtime, ledger, vectorEncoder } = fixture(t)
+  const s = session()
+  const agent = { cwd: 'E:/bench', session: s }
+  const text = `项目M衣物提取记录。${'相关购物上下文。'.repeat(300)}需要取回海军蓝西装外套，并退回Zara靴子。`
+  ledger.upsert('sourceSegments', {
+    id: 'clothing-source', sessionId: 's', state: 'sensory',
+    replacementLineage: [{ transition: 'context-pressure' }],
+    records: [{ seq: 1, role: 'user', sourceKind: 'user', text }],
+  }, { scopeKind: 'session', scopeId: 's', id: 'clothing-source' })
+  ledger.upsert('sensoryChunks', {
+    id: 'clothing-parent', kind: 'context-parent', label: '衣物记录', scopeKind: 'session', scopeId: 's',
+    sessionId: 's', workspaceId: 'w', segmentId: 'clothing-source', coreText: text, contextText: text,
+    vector: vectorEncoder.encodeSync(text), sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9,
+    verifiedSource: true, temporalCurrent: true,
+  }, { scopeKind: 'session', scopeId: 's', id: 'clothing-parent' })
+  const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '需要取回或退回多少件衣物？' }], source: { kind: 'user' } }
+  const originalRenderCatalog = runtime.matcher.renderCatalog.bind(runtime.matcher)
+  runtime.matcher.renderCatalog = () => null
+  const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  runtime.matcher.renderCatalog = originalRenderCatalog
+  assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['sensory-retrieval-hint', 'real-user'])
+  assert.match(decision.messages[0].content[0].text, /sensory_recall/u)
+  assert.equal(runtime.status('s', 'w').lastPreStep.retrievalHint.entryCount >= 1, true)
+})
+
 test('unchanged semipersistent snapshots are reused and changed snapshots supersede the old surface event', (t) => {
   const { semi, surface } = fixture(t)
   const s = session()
