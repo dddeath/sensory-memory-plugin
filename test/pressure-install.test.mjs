@@ -7,10 +7,11 @@ import { SensoryMaintenance } from '../lib/sensory-maintenance.js'
 
 test('pressure runtime prepends pre-step so it can reduce pressure before native DSH compaction', () => {
   const listeners = []
+  const contexts = []
   const ctx = {
     on(name, listener, options) { listeners.push({ name, listener, options }); return () => {} },
-    effect() { return () => {} },
-    systemPrompt: { context() { return () => {} } },
+    effect(effect, label) { if (label === 'sensory-memory: parent child context') effect(); return () => {} },
+    systemPrompt: { context(value) { contexts.push(value); return () => {} } },
   }
   const services = {
     runtime: { preStep() {}, turnStopping() {}, drainSession() {} },
@@ -22,6 +23,7 @@ test('pressure runtime prepends pre-step so it can reduce pressure before native
   const preStep = listeners.find((row) => row.name === 'agent/pre-step')
   assert.ok(preStep)
   assert.deepEqual(preStep.options, { prepend: true })
+  assert.match(contexts[0].text, /计数或汇总问题先枚举/u)
 })
 
 test('maintenance reports the enforced session-only sensory scope', () => {
