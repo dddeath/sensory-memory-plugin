@@ -228,7 +228,7 @@ agent/pre-step（prepend）
   → 使用 DSH token meter 计算处理前压力
   → 低于65%且没有已卸载历史：原样进入，不检索、不调用 planner
   → 达到65%：按冷却时长、体积和原始顺序选择完整 segment
-  → 无损卸载，直到约55%
+  → 无损卸载并逐级压缩，直到约35%
   → 只检索已卸载 Parent
   → 证据受最终65%输入上限约束并插在真实 user 之前
   → DSH原生80% compaction保持启用
