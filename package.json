@@ -2,6 +2,14 @@
   "name": "@local/sensory-memory",
   "version": "0.11.0-pressure-driven",
   "description": "Pressure-driven Parent/Child context offloading with hybrid retrieval for DeepSeek Harness",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dddeath/sensory-memory-plugin.git"
+  },
+  "homepage": "https://github.com/dddeath/sensory-memory-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/dddeath/sensory-memory-plugin/issues"
+  },
   "type": "module",
   "main": "./lib/index.js",
   "exports": {

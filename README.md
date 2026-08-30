@@ -8,7 +8,7 @@
 
 ```text
 完整 turn/document 保留在工作上下文
-→ 阈值前只预计算 Parent/Child，不改写 prompt
+→ 阈值前只预计算 Parent/Child，prompt保持原样
 → 上下文达到65%后，才把冷 Parent 无损卸载到 session 索引
 → 压缩目标55%，DSH原生80% compaction继续作为兜底
 → 后续查询只检索已经卸载的 Child
@@ -259,7 +259,7 @@ automaticRetrievalBelowPressure: false
 
 - “连续4轮未关联”只参与达到压力后的压缩排序，不再单独触发卸载。
 - `effectiveInputCapTokens` 未设置时，沿用 routed context window 减输出预留；隔离 Benchmark 可用环境变量 `DSH_MEMORY_EFFECTIVE_INPUT_CAP_TOKENS` 把 A/C 放到同一压力轴。显式值是权威实验 cap，可覆盖 provider 注册表中过时的 context metadata；设置前必须用真实 warmup usage 完成一次压力校准。
-- 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，不能重新把输入推满。
+- 压缩后半持久快照和 Parent evidence 共享到65%阈值的剩余 headroom，证据注入受该headroom约束，避免重新把输入推满。
 - Parent 太大放不下时跳过，绝不重新切成碎片注入。
 - `DSH_MEMORY_VECTOR_REQUIRED=true` 让正式 Benchmark 在 E5 失败时终止该题；普通环境仍可显式降级并报告。
 - 插件 listener 使用 prepend，使65%无损卸载有机会先于 DSH 默认80%原生摘要执行；原生 compaction仍保留为相同安全兜底。

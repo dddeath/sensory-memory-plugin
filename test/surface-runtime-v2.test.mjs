@@ -282,6 +282,36 @@ test('benchmark finalize lands remaining working history while ordinary dispose-
   assert.equal(runtime.layerCounts('s', 'w').working, 0)
 })
 
+test('benchmark cleanup drains and drops the session without a second surface finalization', async (t) => {
+  const { runtime, ledger } = fixture(t)
+  const s = session()
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.ledger.drain('session:s', 1000)
+  assert.equal(runtime.layerCounts('s', 'w').working, 1)
+  runtime.lastEvidence.set('s', { selected: ['large-session-evidence'] })
+  runtime.lastTransitions.set('s', [{ transition: 'fixture' }])
+  runtime.sessionAuxiliaryPurposes.set('s', { 'memory-retrieval-plan': 1 })
+  runtime.frozenSessions.add('s')
+  runtime.workspaceTurns.set('w', 9)
+  runtime.lastPreStep = { sessionId: 's', large: 'fixture' }
+
+  const dropped = await runtime.dropSession('s', { workspaceId: 'w', dropUniqueWorkspaceMemory: true })
+
+  assert.equal(s.replacements.length, 0)
+  assert.equal(ledger.list('sourceSegments', { scopeKind: 'session', scopeId: 's' }).length, 0)
+  assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length, 0)
+  assert.equal(dropped.sessionId, 's')
+  assert.equal(dropped.workspace !== null, true)
+  assert.equal(runtime.sessions.has('s'), false)
+  assert.equal(runtime.lastEvidence.has('s'), false)
+  assert.equal(runtime.lastTransitions.has('s'), false)
+  assert.equal(runtime.sessionAuxiliaryPurposes.has('s'), false)
+  assert.equal(runtime.frozenSessions.has('s'), false)
+  assert.equal(runtime.workspaceTurns.has('w'), false)
+  assert.equal(runtime.lastPreStep, null)
+})
+
 test('archive freezes retrieval and unarchive restores the persisted session scope', async (t) => {
   const { runtime } = fixture(t)
   const s = session()

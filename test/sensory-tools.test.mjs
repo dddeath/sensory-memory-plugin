@@ -90,3 +90,40 @@ test('tool schemas expose chunk rather than entity parameters', (t) => {
   assert.deepEqual(Object.keys(tools.get('sensory_open').parameters.properties), ['chunk'])
   assert.equal(tools.has('sensory_audit'), false)
 })
+
+test('retrieval-only tool mode exposes only sensory_recall and sensory_open', () => {
+  const tools = createSensoryToolDefinitions({
+    matcher: { scopeFor: () => 's' },
+    toolMode: 'retrieval-only',
+  })
+  assert.deepEqual(tools.map((tool) => tool.name), ['sensory_recall', 'sensory_open'])
+})
+
+test('retrieval-only benchmark budget returns one recall result and then asks the model to answer', async () => {
+  let calls = 0
+  const tools = createSensoryToolDefinitions({
+    toolMode: 'retrieval-only',
+    retrievalToolCallLimit: 1,
+    matcher: {},
+    runtime: {
+      config: { userGlobalEnabled: false },
+      async workspace() { return { workspaceId: 'w' } },
+      matcher: {
+        async retrieveAsync() { calls += 1; return { candidates: [] } },
+      },
+    },
+  })
+  const recall = tools.find((tool) => tool.name === 'sensory_recall')
+  const exec = { turn: 1, agent: { session: { id: 's' } } }
+  assert.match(await recall.execute({ query: 'first' }, exec), /"chunks": \[\]/)
+  assert.match(await recall.execute({ query: 'second' }, exec), /"budgetExceeded": true/)
+  assert.equal(calls, 1)
+})
+
+test('compression-only tool mode exposes no memory tools', () => {
+  const tools = createSensoryToolDefinitions({
+    matcher: { scopeFor: () => 's' },
+    toolMode: 'compression-only',
+  })
+  assert.deepEqual(tools, [])
+})

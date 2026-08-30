@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { installChunkMemory } from '../lib/install-chunk-memory.js'
+import { pluginConfigFromEnvironment } from '../lib/plugin-services.js'
 import { SensoryMaintenance } from '../lib/sensory-maintenance.js'
 
 test('pressure runtime prepends pre-step so it can reduce pressure before native DSH compaction', () => {
@@ -33,4 +34,22 @@ test('maintenance reports the enforced session-only sensory scope', () => {
   const status = maintenance.status('session-1')
   assert.equal(status.indexScope, 'session')
   assert.equal(status.layered.sessionId, 'session-1')
+})
+
+test('benchmark can select a visible lexical-only ablation instead of an E5 endpoint', () => {
+  const config = pluginConfigFromEnvironment({
+    vectorProvider: 'http',
+    vectorEndpoint: 'http://127.0.0.1:8765/embed',
+    vectorRequired: true,
+  }, {
+    DSH_MEMORY_VECTOR_PROVIDER: 'none',
+    DSH_MEMORY_TOOL_MODE: 'retrieval-only',
+    DSH_MEMORY_RETRIEVAL_TOOL_CALL_LIMIT: '1',
+  })
+  assert.equal(config.vectorProvider, 'none')
+  assert.equal(config.vectorEndpoint, null)
+  assert.equal(config.vectorRequired, false)
+  assert.equal(config.toolMode, 'retrieval-only')
+  assert.equal(config.retrievalToolCallLimit, 1)
+  assert.equal(config.indexScope, 'session')
 })
