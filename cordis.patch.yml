@@ -32,6 +32,7 @@
         vectorLowConfidenceFloor: 0.50
         parentTargetTokens: 2048
         parentMaxTokens: 3072
+        parentMaxTurns: 8
         parentMinTokens: 512
         childTargetTokens: 384
         childMaxTokens: 512

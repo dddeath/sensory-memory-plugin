@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { MemoryLedger } from '../lib/memory-ledger.js'
+import { mergeSegmentsToParentGroup } from '../lib/layered-memory-records.js'
 import { MemorySurfaceProjector } from '../lib/memory-surface-projector.js'
+import { renderParentPointer } from '../lib/pointer-label-compressor.js'
 import { inject } from '../lib/index.js'
 import { runtimeFixture, testSession } from './helpers/runtime-fixture.mjs'
 
@@ -52,7 +54,91 @@ test('context pressure replaces the cold complete segment with a session sensory
   assert.equal(s.replacements[0].data.role, 'user')
   assert.equal(s.replacements[0].data.source.kind, 'plugin')
   assert.equal(s.replacements[0].data.source.purpose, 'sensory-checkpoint')
+  assert.match(s.replacements[0].data.content[0].text, /^⟦p[0-9a-z-]+⟧ \[1-2\]/u)
+  assert.equal(s.replacements[0].data.content[0].text.includes('children:'), false)
+  assert.equal(s.replacements[0].data.content[0].text.includes('sourceRefs:'), false)
   assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
+})
+
+test('standard Parent pointer keeps a deterministic label within 24 estimated tokens', () => {
+  const parent = {
+    id: 'very-long-parent-id-that-never-enters-the-provider-pointer',
+    firstSeq: 120,
+    lastSeq: 137,
+    parentIndex: 0,
+    documentTitle: '关于项目M生产环境发布流程以及部署端口调整情况的讨论记录',
+  }
+  const first = renderParentPointer(parent)
+  const second = renderParentPointer(parent)
+  assert.deepEqual(first, second)
+  assert.equal(first.estimatedTokens <= 24, true)
+  assert.match(first.text, /^⟦p[0-9a-z-]+⟧ \[120-137\]/u)
+  assert.equal(first.text.includes(parent.id), false)
+  assert.equal(first.label.length <= 32, true)
+})
+
+test('adjacent sealed turns merge into one Parent while preserving Child offsets and source refs', () => {
+  const makeSegment = (turn, firstSeq, text) => ({
+    id: `seg-${turn}`,
+    segmentId: `seg-${turn}`,
+    sessionId: 's',
+    workspaceId: 'w',
+    turn,
+    firstSeq,
+    lastSeq: firstSeq + 1,
+    sourceSeqs: [firstSeq, firstSeq + 1],
+    records: [{ seq: firstSeq, role: 'user', sourceKind: 'user', text }],
+    contextChunks: [{
+      id: `seg-${turn}:parent:001`,
+      parentIndex: 0,
+      documentTitle: `turn-${turn}`,
+      coreText: text,
+      tokenCount: 20,
+      childSpans: [{ childId: `old-${turn}`, startOffset: 0, endOffset: text.length, embeddingText: text, vector: { values: [1, 0] } }],
+    }],
+    importance: 0.5,
+    durability: 0.5,
+    evidenceQuality: 0.85,
+    verifiedSource: true,
+    associations: [],
+    createdAt: firstSeq,
+  })
+  const merged = mergeSegmentsToParentGroup([
+    makeSegment(1, 1, '项目M生产端口8383'),
+    makeSegment(2, 3, '负责人林澄'),
+    makeSegment(3, 5, '备用代号CEDAR-9'),
+  ], { parentMaxTurns: 8, parentMaxTokens: 3000 })
+  assert.deepEqual(merged.memberSegmentIds, ['seg-1', 'seg-2', 'seg-3'])
+  assert.equal(merged.contextChunks.length, 1)
+  assert.equal(merged.contextChunks[0].childSpans.length, 3)
+  assert.equal(merged.contextChunks[0].sourceRefs.length, 6)
+  assert.equal(merged.contextChunks[0].childSpans[1].startOffset > merged.contextChunks[0].childSpans[0].endOffset, true)
+  assert.equal(merged.contextChunks[0].childSpans.every((child) => child.parentId === merged.contextChunks[0].id), true)
+})
+
+test('benchmark finalize groups adjacent working turns into one sensory Parent', async (t) => {
+  const { runtime, ledger } = fixture(t)
+  const s = session()
+  s.events.push(
+    { seq: 3, time: 3, type: 'user/message', data: { id: 'u2', role: 'user', turn: 2, content: [{ type: 'text', text: '项目M负责人是林澄。' }], source: { kind: 'user' } }, surfaceOp: 'append' },
+    { seq: 4, time: 4, type: 'assistant/message', data: { turn: 2, message: { id: 'a2', role: 'assistant', content: [{ type: 'text', text: '已记录。' }], source: { kind: 'model' } } }, surfaceOp: 'append' },
+    { seq: 5, time: 5, type: 'user/message', data: { id: 'u3', role: 'user', turn: 3, content: [{ type: 'text', text: '备用代号是CEDAR-9。' }], source: { kind: 'user' } }, surfaceOp: 'append' },
+    { seq: 6, time: 6, type: 'assistant/message', data: { turn: 3, message: { id: 'a3', role: 'assistant', content: [{ type: 'text', text: '已记录。' }], source: { kind: 'model' } } }, surfaceOp: 'append' },
+  )
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.turnStopping({ agent, turn: 2 })
+  await runtime.turnStopping({ agent, turn: 3 })
+  await runtime.ledger.drain('session:s', 1000)
+  const finalized = await runtime.finalizeSession('s')
+  const parents = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
+  assert.equal(finalized.transitions.length, 1)
+  assert.equal(finalized.transitions[0].grouped, true)
+  assert.equal(finalized.transitions[0].memberSegmentIds.length, 3)
+  assert.equal(parents.length, 1)
+  assert.equal(parents[0].memberSegmentIds.length, 3)
+  assert.equal(runtime.layerCounts('s', 'w').working, 0)
+  assert.deepEqual(s.replacements[0].surfaceOp, { op: 'replace', start: 1, end: 6 })
 })
 
 test('surface replacement publishes an exact token-meter shadow price immediately before the replacement', (t) => {
@@ -127,7 +213,7 @@ test('explicit effective cap overrides stale provider context metadata', (t) => 
   assert.equal(budget.effectiveInputCapSource, 'explicit-config')
 })
 
-test('a visible DSH compact checkpoint migrates shadowed working segments to sensory and restores a root manifest', async (t) => {
+test('a visible DSH compact checkpoint migrates shadowed working segments without a model-visible root manifest', async (t) => {
   const { runtime, ledger } = fixture(t)
   const s = session()
   const agent = { cwd: 'E:/bench', session: s }
@@ -150,7 +236,7 @@ test('a visible DSH compact checkpoint migrates shadowed working segments to sen
   assert.equal(segment.replacementLineage.at(-1).transition, 'external-compaction')
   assert.equal(segment.replacementLineage.at(-1).compactionId, 'c1')
   assert.equal(ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' }).length > 0, true)
-  assert.equal(decision.messages[0].source.purpose, 'sensory-root-manifest')
+  assert.equal(decision.messages.some((message) => message.source?.purpose === 'sensory-root-manifest'), false)
   assert.equal(runtime.status('s', 'w').stats.externalCompactionToSensory, 1)
   assert.equal(runtime.status('s', 'w').transitions[0].transition, 'external-compaction')
 })
@@ -199,8 +285,8 @@ test('semipersistent snapshot and sensory catalog are plugin user messages immed
   ledger.upsert('sensoryChunks', { id: 'chunk-m', kind: 'context-chunk', label: '项目M上下文', scopeKind: 'session', scopeId: 's', sessionId: 's', workspaceId: 'w', segmentId: 'sensory-source', coreText: '项目M端口8282', contextText: '项目M端口8282', vector: vectorEncoder.encodeSync('项目M端口8282'), sourceRefs: [{ sessionId: 's', seq: 1 }], evidenceQuality: 0.9, verifiedSource: true, temporalCurrent: true }, { scopeKind: 'session', scopeId: 's', id: 'chunk-m' })
   const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '项目M端口是多少' }], source: { kind: 'user' } }
   const decision = await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
-  assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['sensory-root-manifest', 'semipersistent-snapshot', 'sensory-catalog', 'real-user'])
-  assert.equal(decision.messages.slice(0, 3).every((message) => message.role === 'user' && message.source.kind === 'plugin'), true)
+  assert.deepEqual(decision.messages.map((message) => message.source?.purpose ?? 'real-user'), ['semipersistent-snapshot', 'sensory-catalog', 'real-user'])
+  assert.equal(decision.messages.slice(0, 2).every((message) => message.role === 'user' && message.source.kind === 'plugin'), true)
 })
 
 test('manual sensory storage alone does not cause automatic low-pressure retrieval', async (t) => {
@@ -282,7 +368,8 @@ test('benchmark finalize lands remaining working history while ordinary dispose-
   assert.equal(runtime.layerCounts('s', 'w').working, 0)
   const [parent] = ledger.list('sensoryChunks', { scopeKind: 'session', scopeId: 's' })
   assert.equal(parent.surfaceResidency, 'labeled-pointer')
-  assert.equal(parent.pointer.mode, 'legacy-preview')
+  assert.equal(parent.pointer.mode, 'labeled')
+  assert.equal(typeof parent.pointer.pointerId, 'string')
   assert.equal(Number.isFinite(parent.pointer.eventSeq), true)
   assert.equal(parent.pointer.estimatedTokens > 0, true)
   assert.equal(runtime.layerCounts('s', 'w').surfaceResidency.labeledPointer > 0, true)

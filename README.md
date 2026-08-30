@@ -44,7 +44,7 @@
 ```
 
 - Parent 是 Layer Ledger 中的 mutation 单位、来源核验单位、关联单位和模型披露单位。
-- Parent 不跨原始 document，也不跨 turn。
+- Parent保持原始document边界；达到压力后可把同一边界内最多8个相邻turn聚合成一个Parent。
 - `coreText` 不因更新而改写；旧事实通过 `supersededRanges` 从 current view 中移除。
 - session sensory 只能被同一 session 检索。
 
@@ -75,6 +75,7 @@
 ```yaml
 parentTargetTokens: 2048
 parentMaxTokens: 3072
+parentMaxTurns: 8
 parentMinTokens: 512
 childTargetTokens: 384
 childMaxTokens: 512
