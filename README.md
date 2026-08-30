@@ -2,7 +2,7 @@
 
 这是一个面向**有限上下文长周期 Agent**的最小可审计原型。它不构建实体图，也不复制“每个实体一条观察”；唯一权威检索记录是 `ParentChunk`，嵌套的 `ChildSpan` 只负责细粒度向量定位。
 
-当前版本：`0.11.0-pressure-driven`。
+当前开发版本：`0.12.0-progressive-dev`；已发布基线为`v0.11.0-pressure-driven`。
 
 ## 1. 一句话理解
 
@@ -10,7 +10,8 @@
 完整 turn/document 保留在工作上下文
 → 阈值前只预计算 Parent/Child，prompt保持原样
 → 上下文达到65%后，才把冷 Parent 无损卸载到 session 索引
-→ 压缩目标55%，DSH原生80% compaction继续作为兜底
+→ 标准pointer、压缩label、ID-only、detached逐级压回35%
+→ fixed prefix超过35%时记录原因并交给DSH原生compaction
 → 后续查询只检索已经卸载的 Child
 → Child 命中聚合回 Parent，按需把完整 Parent current view 放回上下文
 ```
@@ -254,7 +255,7 @@ llm/stream
 ```yaml
 compressionMode: pressure
 contextPressureRatio: 0.65
-contextPressureTargetRatio: 0.55
+contextPressureTargetRatio: 0.35
 automaticRetrievalBelowPressure: false
 ```
 

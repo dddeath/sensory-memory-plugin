@@ -458,6 +458,36 @@ test('surface budget separates fixed floor, working history and plugin projectio
   assert.equal(typeof budget.targetReachable, 'boolean')
 })
 
+test('default pressure target is 35 percent of usable input', () => {
+  const surface = new MemorySurfaceProjector({ ledger: null, config: { effectiveInputCapTokens: 100 } })
+  const budget = surface.budget({
+    sessionId: 's',
+    contextWindow: 1000,
+    maxOutputTokens: 200,
+    request: { system: '', tools: [], messages: [] },
+  })
+  assert.equal(surface.config.contextPressureTargetRatio, 0.35)
+  assert.equal(budget.pressureTargetTokens, 35)
+  assert.equal(budget.targetReachable, true)
+})
+
+test('runtime reports fixed prefix as the owner when it already exceeds the 35 percent target', async (t) => {
+  const { runtime } = runtimeFixture(t, { effectiveInputCapTokens: 40 })
+  const s = session()
+  s.requestHeader = () => ({ system: '固定系统前缀'.repeat(20), tools: [] })
+  const agent = { cwd: 'E:/bench', session: s }
+  await runtime.turnStopping({ agent, turn: 1 })
+  await runtime.ledger.drain('session:s', 1000)
+  const current = { id: 'u2', role: 'user', content: [{ type: 'text', text: '继续' }], source: { kind: 'user' } }
+  await runtime.preStep({ agent, messages: [current], turn: 2, step: 1 }, async () => ({ kind: 'enter', messages: [current] }))
+  const outcome = runtime.status('s', 'w').pointerCompression.outcome
+  assert.equal(outcome.targetRatio, 0.35)
+  assert.equal(outcome.targetReached, false)
+  assert.equal(outcome.reason, 'fixed-prefix-exceeds-target')
+  assert.equal(outcome.nextOwner, 'dsh-native-compaction')
+  assert.equal(outcome.fixedFloorTokens > outcome.targetTokens, true)
+})
+
 test('benchmark cleanup drains and drops the session without a second surface finalization', async (t) => {
   const { runtime, ledger } = fixture(t)
   const s = session()

@@ -46,7 +46,7 @@
         semiInactiveHours: 24
         semiActivationFloor: -1.5
         contextPressureRatio: 0.65
-        contextPressureTargetRatio: 0.55
+        contextPressureTargetRatio: 0.35
         semipersistentBudgetRatio: 0.20
         parentEvidenceBudgetRatio: 0.45
         transitionWaitMs: 5000

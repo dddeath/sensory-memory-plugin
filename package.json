@@ -1,6 +1,6 @@
 {
   "name": "@local/sensory-memory",
-  "version": "0.11.0-pressure-driven",
+  "version": "0.12.0-progressive-dev",
   "description": "Pressure-driven Parent/Child context offloading with hybrid retrieval for DeepSeek Harness",
   "repository": {
     "type": "git",
